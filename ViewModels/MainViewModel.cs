@@ -144,12 +144,32 @@ public partial class MainViewModel : ObservableObject
 
         if (dlg.ShowDialog() != true) return;
 
+        // 根据当前选中节点决定添加到哪个文件夹下
+        var targetFolder = GetTargetFolderForAdd();
         foreach (var file in dlg.FileNames)
         {
-            AddFileToRoot(file);
+            AddFileToNode(file, targetFolder);
         }
+
+        // 展开目标文件夹，让用户看到刚加入的文件
+        if (targetFolder != null) targetFolder.IsExpanded = true;
+
         RefreshPreview();
-        StatusText = $"已添加 {dlg.FileNames.Length} 个文件";
+        StatusText = targetFolder == null
+            ? $"已添加 {dlg.FileNames.Length} 个文件到根目录"
+            : $"已添加 {dlg.FileNames.Length} 个文件到文件夹: {targetFolder.Title}";
+    }
+
+    /// <summary>
+    /// 根据当前选中节点，决定新添加的文件/文件夹应该放到哪里：
+    /// - 没选：返回 null（根目录）
+    /// - 选中文件夹：返回该文件夹
+    /// - 选中文件：返回该文件所在的父文件夹
+    /// </summary>
+    private DocumentNode? GetTargetFolderForAdd()
+    {
+        if (SelectedNode == null) return null;
+        return SelectedNode.IsFolder ? SelectedNode : SelectedNode.Parent;
     }
 
     [RelayCommand]
@@ -169,14 +189,29 @@ public partial class MainViewModel : ObservableObject
             Title = folderName,
             NodeType = NodeType.Folder
         };
-        folderNode.Parent = null;
+
+        // 根据当前选中决定父节点
+        var targetFolder = GetTargetFolderForAdd();
+        folderNode.Parent = targetFolder;
 
         // 递归扫描文件夹下的 HTML/Word
         AddFilesFromDirectory(folderPath, folderNode);
 
-        RootNodes.Add(folderNode);
+        if (targetFolder == null)
+        {
+            RootNodes.Add(folderNode);
+        }
+        else
+        {
+            targetFolder.Children.Add(folderNode);
+            targetFolder.IsExpanded = true;
+        }
+
+        SelectedNode = folderNode;
         RefreshPreview();
-        StatusText = $"已添加文件夹: {folderName}";
+        StatusText = targetFolder == null
+            ? $"已添加文件夹到根目录: {folderName}"
+            : $"已添加文件夹到 {targetFolder.Title}: {folderName}";
     }
 
     private void AddFilesFromDirectory(string dir, DocumentNode parentNode)
@@ -205,16 +240,17 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private void AddFileToRoot(string filePath)
-    {
-        var node = CreateFileNode(filePath, null);
-        RootNodes.Add(node);
-    }
-
-    private void AddFileToNode(string filePath, DocumentNode parent)
+    private void AddFileToNode(string filePath, DocumentNode? parent)
     {
         var node = CreateFileNode(filePath, parent);
-        parent.Children.Add(node);
+        if (parent == null)
+        {
+            RootNodes.Add(node);
+        }
+        else
+        {
+            parent.Children.Add(node);
+        }
     }
 
     private DocumentNode CreateFileNode(string filePath, DocumentNode? parent)
@@ -246,16 +282,30 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void AddNewFolder()
     {
+        // 根据当前选中决定父节点
+        var targetFolder = GetTargetFolderForAdd();
         var folder = new DocumentNode
         {
             Title = "新建文件夹",
             NodeType = NodeType.Folder,
-            Parent = null
+            Parent = targetFolder
         };
-        RootNodes.Add(folder);
+
+        if (targetFolder == null)
+        {
+            RootNodes.Add(folder);
+        }
+        else
+        {
+            targetFolder.Children.Add(folder);
+            targetFolder.IsExpanded = true;
+        }
+
         SelectedNode = folder;
         RefreshPreview();
-        StatusText = "已新建文件夹（双击重命名）";
+        StatusText = targetFolder == null
+            ? "已新建文件夹到根目录（双击重命名）"
+            : $"已新建文件夹到 {targetFolder.Title}（双击重命名）";
     }
 
     [RelayCommand]
