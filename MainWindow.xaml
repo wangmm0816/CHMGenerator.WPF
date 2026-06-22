@@ -1,0 +1,378 @@
+<Window x:Class="CHMGenerator.WPF.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:CHMGenerator.WPF.ViewModels"
+        xmlns:helpers="clr-namespace:CHMGenerator.WPF.Helpers"
+        xmlns:models="clr-namespace:CHMGenerator.WPF.Models"
+        mc:Ignorable="d"
+        Title="CHM Generator - 可视化 CHM 帮助文档生成器"
+        Height="800" Width="1400"
+        MinHeight="600" MinWidth="1000"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BackgroundBrush}"
+        d:DataContext="{d:DesignInstance Type=vm:MainViewModel}">
+
+    <Window.Resources>
+        <helpers:NodeTypeToIconConverter x:Key="NodeIconConverter"/>
+        <helpers:NodeTypeToTextConverter x:Key="NodeTextConverter"/>
+        <helpers:PathShortenerConverter x:Key="PathShortener"/>
+
+        <!-- TreeView 节点模板 -->
+        <HierarchicalDataTemplate DataType="{x:Type models:DocumentNode}"
+                                  ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal" Margin="0,2">
+                <TextBlock Text="{Binding NodeType, Converter={StaticResource NodeIconConverter}}"
+                           FontSize="14" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding Title}" VerticalAlignment="Center"/>
+            </StackPanel>
+        </HierarchicalDataTemplate>
+
+        <!-- 预览项模板 -->
+        <DataTemplate DataType="{x:Type vm:PreviewItem}">
+            <TextBlock Text="{Binding Title}" FontFamily="{StaticResource MonoFont}" FontSize="13"/>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Window.DataContext>
+        <vm:MainViewModel/>
+    </Window.DataContext>
+
+    <DockPanel LastChildFill="True">
+
+        <!-- ===== 顶部工具栏（深蓝表头） ===== -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource AccentBrush}"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <Grid Margin="10,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- 添加文件按钮组 -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding AddFilesCommand}"
+                            ToolTip="添加 HTML / Word 文件">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="📂" Margin="0,0,6,0"/>
+                            <TextBlock Text="添加文件"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding AddFolderCommand}"
+                            ToolTip="添加整个文件夹">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="📁" Margin="0,0,6,0"/>
+                            <TextBlock Text="添加文件夹"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding AddNewFolderCommand}"
+                            ToolTip="新建空文件夹">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="➕" Margin="0,0,6,0"/>
+                            <TextBlock Text="新建文件夹"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <Rectangle Grid.Column="1" Style="{StaticResource VerticalSeparator}"/>
+
+                <!-- 节点操作按钮 -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button Style="{StaticResource ToolbarButton}"
+                            Command="{Binding MoveUpCommand}"
+                            CommandParameter="{Binding SelectedNode}"
+                            ToolTip="上移">
+                        <TextBlock Text="⬆ 上移"/>
+                    </Button>
+                    <Button Style="{StaticResource ToolbarButton}"
+                            Command="{Binding MoveDownCommand}"
+                            CommandParameter="{Binding SelectedNode}"
+                            ToolTip="下移">
+                        <TextBlock Text="⬇ 下移"/>
+                    </Button>
+                    <Button Style="{StaticResource ToolbarButton}"
+                            Command="{Binding DeleteNodeCommand}"
+                            CommandParameter="{Binding SelectedNode}"
+                            ToolTip="删除选中节点">
+                        <TextBlock Text="🗑 删除"/>
+                    </Button>
+                </StackPanel>
+
+                <Rectangle Grid.Column="3" Style="{StaticResource VerticalSeparator}"/>
+
+                <!-- 标题 -->
+                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="CHM 标题:" Margin="0,0,8,0" Foreground="White"/>
+                    <TextBox Text="{Binding ProjectTitle, UpdateSourceTrigger=PropertyChanged}"
+                             Width="200" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- 生成按钮 -->
+                <Button Grid.Column="5" Style="{StaticResource PrimaryButton}"
+                        Command="{Binding GenerateChmCommand}"
+                        IsEnabled="{Binding IsBusy, Converter={x:Static helpers:InverseBooleanConverter.Instance}}"
+                        Margin="10,0,0,0" Padding="20,8">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🔨" Margin="0,0,8,0"/>
+                        <TextBlock Text="生成 CHM" FontWeight="SemiBold"/>
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="6" Style="{StaticResource ToolbarButton}"
+                        Command="{Binding LocateHhcCommand}"
+                        ToolTip="手动指定 hhc.exe 位置">
+                    <TextBlock Text="⚙"/>
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- ===== 状态栏 ===== -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource AccentBrush}"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="10,4">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <TextBlock Text="状态: " Foreground="#C9D7E8"/>
+                    <TextBlock Text="{Binding StatusText}" Foreground="White"/>
+                </StackPanel>
+
+                <TextBlock Grid.Column="1" Text="{Binding HhcStatus}"
+                           Foreground="#C9D7E8" Margin="0,0,16,0"/>
+
+                <TextBlock Grid.Column="2" Text="{Binding ProgressText}"
+                           Foreground="#FFE08A"/>
+            </Grid>
+        </Border>
+
+        <!-- ===== 进度条（busy 时显示） ===== -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}"
+                Visibility="{Binding IsBusy, Converter={x:Static helpers:BooleanToVisibilityConverter.Instance}, FallbackValue=Collapsed}"
+                Padding="10,4">
+            <ProgressBar Value="{Binding ProgressValue}" Maximum="100" Height="4"/>
+        </Border>
+
+        <!-- ===== 主内容三栏 ===== -->
+        <Grid Margin="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="350"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="280"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- 左：文档树 -->
+            <Grid Grid.Column="0" Background="{StaticResource PanelBrush}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Padding="10,8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="文档目录树" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}"/>
+                        <TextBlock Grid.Column="1" Text="拖拽节点调整层级 · 双击重命名" FontSize="11"
+                                   Foreground="{StaticResource MutedTextBrush}"/>
+                    </Grid>
+                </Border>
+
+                <TreeView Grid.Row="1"
+                          ItemsSource="{Binding RootNodes}"
+                          helpers:TreeViewDragDropHelper.EnableDragDrop="True"
+                          helpers:TreeViewSelectedItemBinder.SelectedItem="{Binding SelectedNode, Mode=TwoWay}"
+                          Background="{StaticResource PanelBrush}"
+                          BorderThickness="0"
+                          Margin="2"
+                          AllowDrop="True">
+                    <TreeView.ItemContainerStyle>
+                        <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                            <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
+                            <EventSetter Event="MouseDoubleClick" Handler="TreeViewItem_DoubleClick"/>
+                            <EventSetter Event="KeyDown" Handler="TreeViewItem_KeyDown"/>
+                        </Style>
+                    </TreeView.ItemContainerStyle>
+                    <TreeView.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="新建子文件夹" Command="{Binding AddChildFolderCommand}"
+                                      CommandParameter="{Binding SelectedNode}"/>
+                            <MenuItem Header="上移" Command="{Binding MoveUpCommand}"
+                                      CommandParameter="{Binding SelectedNode}"/>
+                            <MenuItem Header="下移" Command="{Binding MoveDownCommand}"
+                                      CommandParameter="{Binding SelectedNode}"/>
+                            <Separator/>
+                            <MenuItem Header="重命名 (F2)" Click="MenuItem_Rename_Click"/>
+                            <MenuItem Header="删除 (Del)" Command="{Binding DeleteNodeCommand}"
+                                      CommandParameter="{Binding SelectedNode}"/>
+                            <Separator/>
+                            <MenuItem Header="预览" Command="{Binding PreviewNodeCommand}"
+                                      CommandParameter="{Binding SelectedNode}"/>
+                        </ContextMenu>
+                    </TreeView.ContextMenu>
+                </TreeView>
+            </Grid>
+
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"
+                          Background="{StaticResource BorderBrush}"/>
+
+            <!-- 中：节点详情编辑 -->
+            <Grid Grid.Column="2" Background="{StaticResource PanelLightBrush}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Padding="10,8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                    <TextBlock Text="节点详情" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}"/>
+                </Border>
+
+                <ScrollViewer Grid.Row="1" Padding="10">
+                    <StackPanel>
+                        <!-- 未选中时的占位 -->
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedNode}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+
+                        <!-- 标题编辑 -->
+                        <TextBlock Text="标题 (CHM 目录中显示)" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <TextBox Text="{Binding SelectedNode.Title, UpdateSourceTrigger=PropertyChanged}"
+                                 Margin="0,0,0,16"/>
+
+                        <!-- 节点类型 -->
+                        <TextBlock Text="节点类型" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <TextBlock Text="{Binding SelectedNode.NodeType, Converter={StaticResource NodeTextConverter}}"
+                                   Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,16"/>
+
+                        <!-- 源文件路径 -->
+                        <TextBlock Text="源文件路径" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <TextBlock Text="{Binding SelectedNode.SourcePath, Converter={StaticResource PathShortener}}"
+                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                                   Margin="0,0,0,16"/>
+
+                        <!-- Word 转换后的路径 -->
+                        <StackPanel Margin="0,0,0,16"
+                                    Visibility="{Binding SelectedNode.ConvertedHtmlPath, Converter={x:Static helpers:StringToVisibilityConverter.Instance}, FallbackValue=Collapsed}">
+                            <TextBlock Text="转换后 HTML 路径" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                            <TextBlock Text="{Binding SelectedNode.ConvertedHtmlPath, Converter={StaticResource PathShortener}}"
+                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <!-- 在 CHM 中的相对路径 -->
+                        <TextBlock Text="在 CHM 中的相对路径" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <TextBlock Text="{Binding SelectedNode.RelativePath}"
+                                   Foreground="{StaticResource SuccessBrush}" TextWrapping="Wrap"
+                                   FontFamily="{StaticResource MonoFont}" Margin="0,0,0,16"/>
+
+                        <!-- 操作按钮 -->
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <Button Content="上移" Margin="0,0,8,0" Padding="14,6"
+                                    Command="{Binding MoveUpCommand}"
+                                    CommandParameter="{Binding SelectedNode}"/>
+                            <Button Content="下移" Margin="0,0,8,0" Padding="14,6"
+                                    Command="{Binding MoveDownCommand}"
+                                    CommandParameter="{Binding SelectedNode}"/>
+                            <Button Content="预览" Margin="0,0,8,0" Padding="14,6"
+                                    Command="{Binding PreviewNodeCommand}"
+                                    CommandParameter="{Binding SelectedNode}"/>
+                        </StackPanel>
+
+                        <Button Content="删除此节点" Margin="0,12,0,0" Padding="14,6"
+                                HorizontalAlignment="Left"
+                                Foreground="{StaticResource ErrorBrush}"
+                                Command="{Binding DeleteNodeCommand}"
+                                CommandParameter="{Binding SelectedNode}"/>
+
+                        <!-- 如果是文件夹，提供新建子文件夹 -->
+                        <Button Content="新建子文件夹" Margin="0,12,0,0" Padding="14,6"
+                                HorizontalAlignment="Left"
+                                Visibility="{Binding SelectedNode.IsFolder, Converter={x:Static helpers:BooleanToVisibilityConverter.Instance}}"
+                                Command="{Binding AddChildFolderCommand}"
+                                CommandParameter="{Binding SelectedNode}"/>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- 未选中时的提示 -->
+                <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedNode}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="👆" FontSize="48" HorizontalAlignment="Center" Margin="0,0,0,16"/>
+                    <TextBlock Text="请选择左侧文档树中的节点" HorizontalAlignment="Center"
+                               Foreground="{StaticResource MutedTextBrush}" FontSize="14"/>
+                    <TextBlock Text="或点击顶部工具栏添加文件" HorizontalAlignment="Center"
+                               Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Grid>
+
+            <GridSplitter Grid.Column="3" Width="5" HorizontalAlignment="Stretch"
+                          Background="{StaticResource BorderBrush}"/>
+
+            <!-- 右：CHM 目录预览 -->
+            <Grid Grid.Column="4" Background="{StaticResource PanelBrush}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Padding="10,8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                    <TextBlock Text="CHM 目录预览" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}"/>
+                </Border>
+
+                <ListBox Grid.Row="1" ItemsSource="{Binding PreviewItems}"
+                         Background="{StaticResource PanelBrush}" BorderThickness="0"
+                         Padding="4">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                            <Setter Property="Padding" Value="6,2"/>
+                            <Setter Property="Margin" Value="0"/>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
+            </Grid>
+        </Grid>
+
+        <!-- ===== 底部日志面板（可折叠） ===== -->
+        <Expander DockPanel.Dock="Bottom" Header="编译日志" IsExpanded="False"
+                  Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+                  BorderThickness="0,1,0,0" MaxHeight="200">
+            <TextBox Text="{Binding LogText}" IsReadOnly="True"
+                     FontFamily="{StaticResource MonoFont}" FontSize="12"
+                     Background="#1A1A1A" Foreground="{StaticResource SuccessBrush}"
+                     BorderThickness="0" Padding="8"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"
+                     TextWrapping="NoWrap"
+                     Height="160"/>
+        </Expander>
+
+    </DockPanel>
+</Window>

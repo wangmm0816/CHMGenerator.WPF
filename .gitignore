@@ -1,0 +1,14 @@
+# VS配置缓存
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# 编译输出
+bin/
+obj/
+
+# 其他
+*.log
+.DS_Store
