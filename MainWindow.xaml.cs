@@ -16,36 +16,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 点击 TreeView 空白区域时取消选中（相当于选回根目录）
-    /// </summary>
-    private void TreeView_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is not TreeView treeView) return;
-
-        // 通过 VisualTreeHelper 找到点击位置上的 Visual
-        var pos = e.GetPosition(treeView);
-        var hitResult = VisualTreeHelper.HitTest(treeView, pos);
-        if (hitResult == null) return;
-
-        var hit = hitResult.VisualHit;
-
-        // 向上找 TreeViewItem，如果找不到说明点的是空白区
-        while (hit != null && hit is not TreeViewItem)
-        {
-            hit = VisualTreeHelper.GetParent(hit);
-        }
-
-        if (hit is not TreeViewItem)
-        {
-            // 点的是空白区域，取消选中
-            if (DataContext is MainViewModel vm)
-            {
-                vm.SelectedNode = null;
-            }
-        }
-    }
-
-    /// <summary>
     /// 点击"根目录"按钮，取消选中回到根目录模式
     /// </summary>
     private void ReturnToRoot_Click(object sender, RoutedEventArgs e)

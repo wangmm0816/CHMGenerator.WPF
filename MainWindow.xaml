@@ -204,8 +204,7 @@
                           Background="{StaticResource PanelBrush}"
                           BorderThickness="0"
                           Margin="2"
-                          AllowDrop="True"
-                          PreviewMouseLeftButtonDown="TreeView_PreviewMouseLeftButtonDown">
+                          AllowDrop="True">
                     <TreeView.ItemContainerStyle>
                         <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>

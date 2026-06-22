@@ -46,6 +46,59 @@ public partial class MainViewModel : ObservableObject
         UpdateHhcStatus();
         RootNodes.CollectionChanged += (_, _) => RefreshPreview();
         Helpers.TreeViewDragDropHelper.NodeDropped += OnNodeDropped;
+        Helpers.TreeViewDragDropHelper.NodeDroppedToRoot += OnNodeDroppedToRoot;
+        Helpers.TreeViewDragDropHelper.BlankAreaClicked += OnBlankAreaClicked;
+        Helpers.TreeViewDragDropHelper.ExternalFilesDropped += OnExternalFilesDropped;
+    }
+
+    /// <summary>
+    /// 点击 TreeView 空白区域时取消选中
+    /// </summary>
+    private void OnBlankAreaClicked()
+    {
+        SelectedNode = null;
+    }
+
+    /// <summary>
+    /// 外部文件拖入 TreeView 时处理（支持从资源管理器直接拖文件进来）
+    /// </summary>
+    private void OnExternalFilesDropped(string[] files, DocumentNode? targetFolder)
+    {
+        foreach (var file in files)
+        {
+            var ext = System.IO.Path.GetExtension(file).ToLowerInvariant();
+            if (ext is ".html" or ".htm" or ".docx")
+            {
+                AddFileToNode(file, targetFolder);
+            }
+            else if (System.IO.Directory.Exists(file))
+            {
+                // 拖入的是文件夹，递归扫描
+                var folderNode = new DocumentNode
+                {
+                    Title = System.IO.Path.GetFileName(file),
+                    NodeType = NodeType.Folder,
+                    Parent = targetFolder
+                };
+                AddFilesFromDirectory(file, folderNode);
+
+                if (targetFolder == null)
+                {
+                    RootNodes.Add(folderNode);
+                }
+                else
+                {
+                    targetFolder.Children.Add(folderNode);
+                    targetFolder.IsExpanded = true;
+                }
+            }
+        }
+
+        if (targetFolder != null) targetFolder.IsExpanded = true;
+        RefreshPreview();
+        StatusText = targetFolder == null
+            ? $"已拖入 {files.Length} 项到根目录"
+            : $"已拖入 {files.Length} 项到文件夹: {targetFolder.Title}";
     }
 
     /// <summary>
@@ -166,6 +219,27 @@ public partial class MainViewModel : ObservableObject
 
         RefreshPreview();
         StatusText = $"已移动: {draggedNode.Title}";
+    }
+
+    /// <summary>
+    /// 拖拽到空白处：把节点移到根
+    /// </summary>
+    private void OnNodeDroppedToRoot(Models.DocumentNode draggedNode)
+    {
+        // 已经在根了就不用动
+        if (draggedNode.Parent == null) return;
+
+        // 从原位置移除
+        var oldParent = draggedNode.Parent;
+        oldParent.Children.Remove(draggedNode);
+
+        // 加到根末尾
+        draggedNode.Parent = null;
+        RootNodes.Add(draggedNode);
+
+        SelectedNode = draggedNode;
+        RefreshPreview();
+        StatusText = $"已移到根目录: {draggedNode.Title}";
     }
 
     private void UpdateHhcStatus()
