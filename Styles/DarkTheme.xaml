@@ -11,6 +11,7 @@
     <Color x:Key="PanelLightColor">#FAFBFC</Color>
     <Color x:Key="BorderColor">#E5E7EB</Color>
     <Color x:Key="HoverColor">#EDF1F7</Color>
+    <!-- 选中色：浅蓝（不再用深蓝） -->
     <Color x:Key="SelectedColor">#D6E4F5</Color>
     <Color x:Key="AccentColor">#0C50A5</Color>
     <Color x:Key="AccentHoverColor">#0A4489</Color>

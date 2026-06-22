@@ -53,17 +53,58 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     partial void OnSelectedNodeChanged(DocumentNode? value)
     {
-        // 取消旧节点的监听
-        if (_currentListeningNode != null)
+        // 防止递归调用导致栈溢出：
+        // ClearAllSelection 会触发 IsSelected 变化 → TreeView.SelectedItemChanged
+        // → 又会回写 SelectedNode → 再次进入此方法 → 死循环
+        if (_isUpdatingSelection) return;
+        _isUpdatingSelection = true;
+        try
         {
-            _currentListeningNode.PropertyChanged -= OnSelectedNodePropertyChanged;
-        }
+            // 取消旧节点的监听
+            if (_currentListeningNode != null)
+            {
+                _currentListeningNode.PropertyChanged -= OnSelectedNodePropertyChanged;
+            }
 
-        // 监听新节点
-        _currentListeningNode = value;
-        if (_currentListeningNode != null)
+            // 清除其他节点的 IsSelected（跳过当前要选中的，避免触发不必要的属性变化）
+            ClearAllSelection(RootNodes, value);
+
+            // 设置新选中节点的 IsSelected（如果还不是 true）
+            if (value != null && !value.IsSelected)
+            {
+                value.IsSelected = true;
+            }
+
+            // 监听新节点
+            _currentListeningNode = value;
+            if (_currentListeningNode != null)
+            {
+                _currentListeningNode.PropertyChanged += OnSelectedNodePropertyChanged;
+            }
+        }
+        finally
         {
-            _currentListeningNode.PropertyChanged += OnSelectedNodePropertyChanged;
+            _isUpdatingSelection = false;
+        }
+    }
+
+    private bool _isUpdatingSelection = false;
+
+    /// <summary>
+    /// 递归清除所有节点的 IsSelected，跳过指定节点
+    /// </summary>
+    private void ClearAllSelection(IEnumerable<DocumentNode> nodes, DocumentNode? except = null)
+    {
+        foreach (var node in nodes)
+        {
+            if (node != except && node.IsSelected)
+            {
+                node.IsSelected = false;
+            }
+            if (node.Children.Count > 0)
+            {
+                ClearAllSelection(node.Children, except);
+            }
         }
     }
 
@@ -119,6 +160,9 @@ public partial class MainViewModel : ObservableObject
         draggedNode.Parent = newParent;
 
         if (targetNode.IsFolder) targetNode.IsExpanded = true;
+
+        // 拖拽后让被拖动的节点保持选中（通过 SelectedNode 触发统一处理）
+        SelectedNode = draggedNode;
 
         RefreshPreview();
         StatusText = $"已移动: {draggedNode.Title}";
