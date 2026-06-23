@@ -49,6 +49,28 @@ public partial class MainViewModel : ObservableObject
         Helpers.TreeViewDragDropHelper.NodeDroppedToRoot += OnNodeDroppedToRoot;
         Helpers.TreeViewDragDropHelper.BlankAreaClicked += OnBlankAreaClicked;
         Helpers.TreeViewDragDropHelper.ExternalFilesDropped += OnExternalFilesDropped;
+        // v4: 订阅拖拽过程事件，在状态栏显示当前落点提示
+        Helpers.TreeViewDragDropHelper.DropPositionChanged += OnDropPositionChanged;
+        Helpers.TreeViewDragDropHelper.DragEnded += OnDragEnded;
+    }
+
+    /// <summary>
+    /// 拖拽过程中显示当前落点提示（覆盖原 StatusText）
+    /// </summary>
+    private void OnDropPositionChanged(Models.DocumentNode dragged, Models.DocumentNode? target, Helpers.DropPosition pos, string description)
+    {
+        // 拖拽中显示：拖动节点 → 落点描述
+        StatusText = $"拖动「{dragged.Title}」→ {description}";
+    }
+
+    /// <summary>
+    /// 拖拽结束后恢复状态栏
+    /// </summary>
+    private void OnDragEnded()
+    {
+        // 不主动改 StatusText，让 OnNodeDropped/OnNodeDroppedToRoot 设置最终结果
+        // 如果拖拽被取消（没触发 Drop），保留拖拽中的提示一秒后清空
+        // 简化处理：只在拖拽结束时清空，让下一次操作的 StatusText 自然覆盖
     }
 
     /// <summary>
@@ -174,47 +196,73 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private void OnNodeDropped(Models.DocumentNode draggedNode, Models.DocumentNode targetNode)
+    private void OnNodeDropped(Models.DocumentNode draggedNode, Models.DocumentNode targetNode, Helpers.DropPosition position)
     {
-        // 不能把自己拖到自己的子节点下
+        // 不能把自己拖到自己的子节点下（DragOver 已拦截，这里再防御一次）
         if (draggedNode == targetNode) return;
+        if (IsAncestorOrSelf(draggedNode, targetNode)) return;
 
-        // 决定放置方式：
-        // - 如果 targetNode 是文件夹且展开 → 作为 targetNode 的第一个子节点
-        // - 如果 targetNode 是文件夹且折叠 → 作为 targetNode 的子节点
-        // - 如果 targetNode 是文件 → 插入到 targetNode 之前（同级）
-        System.Collections.IList targetList;
-        Models.DocumentNode? newParent;
-        int insertIndex;
-
-        if (targetNode.IsFolder)
+        switch (position)
         {
-            // 拖到文件夹下
-            targetList = targetNode.Children;
-            newParent = targetNode;
-            insertIndex = 0;
+            case Helpers.DropPosition.Inside:
+                // 仅文件夹可达（DragOver 已保证），作为 targetNode 的子节点插到末尾
+                if (draggedNode.Parent == targetNode)
+                {
+                    // 同文件夹内 Inside → 等价于移到末尾
+                    var idx = targetNode.Children.IndexOf(draggedNode);
+                    if (idx >= 0 && idx != targetNode.Children.Count - 1)
+                    {
+                        targetNode.Children.RemoveAt(idx);
+                        targetNode.Children.Add(draggedNode);
+                    }
+                    // 已经是末尾就不用动
+                }
+                else
+                {
+                    // 跨文件夹：先从原位置移除（避免同时存在于两个列表里）
+                    RemoveFromCurrentParent(draggedNode);
+                    targetNode.Children.Add(draggedNode);
+                    draggedNode.Parent = targetNode;
+                }
+                targetNode.IsExpanded = true;
+                break;
+
+            case Helpers.DropPosition.Before:
+                // 插到 targetNode 之前（同级）
+                {
+                    var newParent = targetNode.Parent;
+                    var targetList = newParent?.Children ?? (System.Collections.IList)RootNodes;
+                    var oldParent = draggedNode.Parent;
+                    var sourceList = oldParent?.Children ?? (System.Collections.IList)RootNodes;
+                    if (!ReferenceEquals(sourceList, targetList))
+                    {
+                        // 跨文件夹：先从原位置移除
+                        sourceList.Remove(draggedNode);
+                    }
+                    InsertWithSameListFix(targetList, draggedNode, targetNode, before: true);
+                    draggedNode.Parent = newParent;
+                }
+                break;
+
+            case Helpers.DropPosition.After:
+                // 插到 targetNode 之后（同级）
+                {
+                    var newParent = targetNode.Parent;
+                    var targetList = newParent?.Children ?? (System.Collections.IList)RootNodes;
+                    var oldParent = draggedNode.Parent;
+                    var sourceList = oldParent?.Children ?? (System.Collections.IList)RootNodes;
+                    if (!ReferenceEquals(sourceList, targetList))
+                    {
+                        // 跨文件夹：先从原位置移除
+                        sourceList.Remove(draggedNode);
+                    }
+                    InsertWithSameListFix(targetList, draggedNode, targetNode, before: false);
+                    draggedNode.Parent = newParent;
+                }
+                break;
         }
-        else
-        {
-            // 拖到文件之前（同级）
-            newParent = targetNode.Parent;
-            targetList = newParent?.Children ?? (System.Collections.IList)RootNodes;
-            insertIndex = targetList.IndexOf(targetNode);
-        }
 
-        // 从原位置移除
-        var oldParent = draggedNode.Parent;
-        var oldList = oldParent?.Children ?? (System.Collections.IList)RootNodes;
-        oldList.Remove(draggedNode);
-
-        // 插入到新位置
-        if (insertIndex > targetList.Count) insertIndex = targetList.Count;
-        targetList.Insert(insertIndex, draggedNode);
-        draggedNode.Parent = newParent;
-
-        if (targetNode.IsFolder) targetNode.IsExpanded = true;
-
-        // 拖拽后让被拖动的节点保持选中（通过 SelectedNode 触发统一处理）
+        // 拖拽后让被拖动的节点保持选中
         SelectedNode = draggedNode;
 
         RefreshPreview();
@@ -222,7 +270,81 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 拖拽到空白处：把节点移到根
+    /// 在 targetList 中把 draggedNode 插到 targetNode 的前/后，
+    /// 修复同列表"先 Remove 后 Insert"导致的索引偏移 Bug。
+    ///
+    /// 旧 Bug 复现（同列表）：
+    ///   A B C D，拖 B 到 D 前（insertIndex=3）
+    ///   Remove B → A C D（D 此时索引=2）
+    ///   Insert at 3 → A C D B  ← 错！应该是 A C B D
+    ///
+    /// 修复：先算最终 index，再做一次性的 Remove + Insert。
+    /// </summary>
+    private static void InsertWithSameListFix(
+        System.Collections.IList targetList,
+        Models.DocumentNode draggedNode,
+        Models.DocumentNode targetNode,
+        bool before)
+    {
+        int targetIndex = targetList.IndexOf(targetNode);
+        if (targetIndex < 0)
+        {
+            // 不该发生，防御性处理
+            targetList.Add(draggedNode);
+            return;
+        }
+
+        int finalIndex = before ? targetIndex : targetIndex + 1;
+
+        // 如果 draggedNode 已经在 targetList 里，需要先移除并修正 finalIndex
+        int oldIndex = targetList.IndexOf(draggedNode);
+        if (oldIndex >= 0)
+        {
+            targetList.RemoveAt(oldIndex);
+            // 移除后，如果 finalIndex 指向的位置因 draggedNode 被移除而前移，需要修正
+            if (oldIndex < finalIndex)
+            {
+                finalIndex--;
+            }
+        }
+
+        if (finalIndex < 0) finalIndex = 0;
+        if (finalIndex > targetList.Count) finalIndex = targetList.Count;
+        targetList.Insert(finalIndex, draggedNode);
+    }
+
+    private static bool IsAncestorOrSelf(Models.DocumentNode maybeAncestor, Models.DocumentNode node)
+    {
+        var p = node;
+        while (p != null)
+        {
+            if (p == maybeAncestor) return true;
+            p = p.Parent;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 把 draggedNode 从它当前所在的父列表（RootNodes 或 parent.Children）中移除，
+    /// 用于跨文件夹拖拽时清理原位置。不移除 draggedNode.Parent 字段（由调用方维护）。
+    /// </summary>
+    private void RemoveFromCurrentParent(Models.DocumentNode draggedNode)
+    {
+        var oldParent = draggedNode.Parent;
+        if (oldParent == null)
+        {
+            RootNodes.Remove(draggedNode);
+        }
+        else
+        {
+            oldParent.Children.Remove(draggedNode);
+        }
+    }
+
+    /// <summary>
+    /// 拖拽到 TreeView 真正空白处：把节点移到根末尾。
+    /// 注意：只有鼠标确实落在 TreeView 没有节点的区域才会触发，
+    /// 不会因为同列表前后移动误触发。
     /// </summary>
     private void OnNodeDroppedToRoot(Models.DocumentNode draggedNode)
     {
