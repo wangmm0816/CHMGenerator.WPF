@@ -187,8 +187,8 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="文档目录树" FontWeight="SemiBold" Foreground="{StaticResource HeaderTextBrush}"/>
-                        <TextBlock Grid.Column="1" Text="拖拽调整层级 · 双击重命名 · 点空白回到根" FontSize="11"
-                                   Foreground="{StaticResource MutedTextBrush}" Margin="0,0,8,0"/>
+                        <TextBlock Grid.Column="1" Text="    双击重命名 · 点空白回到根" FontSize="11"
+                                   Foreground="{StaticResource MutedTextBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                         <Button Grid.Column="2" Click="ReturnToRoot_Click" ToolTip="取消选中，回到根目录模式"
                                 Padding="8,2" FontSize="11" Cursor="Hand">
                             <TextBlock Text="📁 根目录"/>
