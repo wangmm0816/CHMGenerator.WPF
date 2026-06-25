@@ -633,11 +633,39 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        // 选择输出目录
-        var dlg = new OpenFolderDialog { Title = "选择 CHM 输出目录" };
+        // 选择父目录，然后基于项目标题创建新文件夹
+        var dlg = new OpenFolderDialog { Title = "选择 CHM 项目存放位置" };
         if (dlg.ShowDialog() != true) return;
 
-        var outputDir = dlg.FolderName;
+        var parentDir = dlg.FolderName;
+
+        // 生成安全的文件夹名（去除非法字符）
+        var safeFolderName = SanitizeFolderName(ProjectTitle);
+        if (string.IsNullOrWhiteSpace(safeFolderName))
+        {
+            safeFolderName = "CHM_Project";
+        }
+
+        // 如果文件夹已存在，添加序号
+        var outputDir = Path.Combine(parentDir, safeFolderName);
+        int counter = 1;
+        while (Directory.Exists(outputDir))
+        {
+            outputDir = Path.Combine(parentDir, $"{safeFolderName}_{counter}");
+            counter++;
+        }
+
+        // 创建新文件夹
+        try
+        {
+            Directory.CreateDirectory(outputDir);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"创建输出文件夹失败：{ex.Message}", "错误");
+            return;
+        }
+
         var srcDir = Path.Combine(outputDir, "src");
         var tempDir = Path.Combine(Path.GetTempPath(), $"CHMGen_{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
@@ -847,6 +875,39 @@ public partial class MainViewModel : ObservableObject
     }
 
     // ============== 辅助方法 ==============
+
+    /// <summary>
+    /// 清理文件夹名称，移除非法字符
+    /// </summary>
+    private static string SanitizeFolderName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "CHM_Project";
+
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new System.Text.StringBuilder();
+        foreach (var c in name)
+        {
+            if (invalid.Contains(c))
+            {
+                sb.Append('_');
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+
+        var result = sb.ToString().Trim();
+
+        // 折叠连续的下划线
+        while (result.Contains("__"))
+        {
+            result = result.Replace("__", "_");
+        }
+
+        result = result.Trim('_');
+        return string.IsNullOrEmpty(result) ? "CHM_Project" : result;
+    }
 
     public void RefreshPreview()
     {
