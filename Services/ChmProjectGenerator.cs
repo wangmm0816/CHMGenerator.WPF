@@ -126,20 +126,41 @@ public class ChmProjectGenerator
 
         foreach (var node in rootNodes.SelectMany(r => r.GetAllFileNodes()))
         {
-            if (string.IsNullOrEmpty(node.EffectiveHtmlPath) || !File.Exists(node.EffectiveHtmlPath))
-                continue;
+            var sourcePath = node.EffectiveHtmlPath;
 
-            // 计算目标路径（相对 src 的 RelativePath）
-            var relativePath = node.RelativePath;
+            // 检查源文件是否存在
+            if (string.IsNullOrEmpty(sourcePath))
+            {
+                System.Diagnostics.Debug.WriteLine($"警告: 节点 {node.Title} 没有有效的 HTML 路径");
+                continue;
+            }
+
+            if (!File.Exists(sourcePath))
+            {
+                System.Diagnostics.Debug.WriteLine($"警告: 文件不存在: {sourcePath}");
+                continue;
+            }
+
+            // 计算目标路径（相对 src 的 RelativePath，安全化文件名以兼容 hhc.exe）
+            var relativePath = SafeHhcRelativePath(node.RelativePath);
             var destPath = Path.Combine(srcDir, relativePath.Replace('/', Path.DirectorySeparatorChar));
             var destDir = Path.GetDirectoryName(destPath);
             if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
 
             // 复制 HTML 文件
-            File.Copy(node.EffectiveHtmlPath, destPath, overwrite: true);
+            try
+            {
+                File.Copy(sourcePath, destPath, overwrite: true);
+                System.Diagnostics.Debug.WriteLine($"复制文件: {sourcePath} → {destPath}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"复制文件失败: {sourcePath} - {ex.Message}");
+                throw new Exception($"复制文件失败: {Path.GetFileName(sourcePath)} - {ex.Message}", ex);
+            }
 
             // 复制关联的图片目录（Word 转换产生的）
-            if (node.NodeType == Models.NodeType.Word)
+            if (node.NodeType == Models.NodeType.Word && !string.IsNullOrEmpty(node.ConvertedHtmlPath))
             {
                 var imageDir = Path.Combine(
                     Path.GetDirectoryName(node.ConvertedHtmlPath) ?? "",
@@ -150,9 +171,18 @@ public class ChmProjectGenerator
                     var destImageDir = Path.Combine(destDir ?? srcDir,
                         Path.GetFileNameWithoutExtension(destPath) + "_images");
                     if (!Directory.Exists(destImageDir)) Directory.CreateDirectory(destImageDir);
-                    foreach (var img in Directory.GetFiles(imageDir))
+
+                    try
                     {
-                        File.Copy(img, Path.Combine(destImageDir, Path.GetFileName(img)), overwrite: true);
+                        foreach (var img in Directory.GetFiles(imageDir))
+                        {
+                            File.Copy(img, Path.Combine(destImageDir, Path.GetFileName(img)), overwrite: true);
+                        }
+                        System.Diagnostics.Debug.WriteLine($"复制图片目录: {imageDir} → {destImageDir}");
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"复制图片失败: {imageDir} - {ex.Message}");
                     }
                 }
             }
@@ -170,26 +200,25 @@ public class ChmProjectGenerator
         sb.AppendLine("Contents file=toc.hhc");
         sb.AppendLine("Index file=index.hhk");
         sb.AppendLine("Default Window=Main");
-        sb.AppendLine($"Default topic={defaultTopic}");
+        sb.AppendLine($"Default topic={SafeHhcRelativePath(defaultTopic)}");
         sb.AppendLine("Display compile progress=Yes");
         sb.AppendLine($"Full-text search={(fullTextSearch ? "Yes" : "No")}");
         sb.AppendLine("Language=0x804");
         sb.AppendLine($"Title={title}");
         sb.AppendLine($"Binary TOC={(binaryToc ? "Yes" : "No")}");
         sb.AppendLine($"Auto Index={(autoIndex ? "Yes" : "No")}");
-        sb.AppendLine("Enhance Decompilation=No");
         sb.AppendLine();
         sb.AppendLine("[WINDOWS]");
-        sb.AppendLine($"Main=\"{title}\",\"toc.hhc\",\"index.hhk\",\"{defaultTopic}\",\"{defaultTopic}\",,,,,0x63520,,0x387e,,,,,,0");
+        sb.AppendLine($"Main=\"{title}\",\"toc.hhc\",\"index.hhk\",\"{SafeHhcRelativePath(defaultTopic)}\",\"{SafeHhcRelativePath(defaultTopic)}\",,,,,0x63520,,0x387e,,,,,,0");
         sb.AppendLine();
         sb.AppendLine("[FILES]");
 
         foreach (var file in allFiles)
         {
-            sb.AppendLine(file.RelativePath);
+            sb.AppendLine(SafeHhcRelativePath(file.RelativePath));
         }
 
-        File.WriteAllText(hhpPath, sb.ToString(), Encoding.GetEncoding("GB2312"));
+        File.WriteAllBytes(hhpPath, Encoding.GetEncoding("GB2312").GetBytes(sb.ToString()));
     }
 
     private void GenerateHhc(string hhcPath, string srcDir, string title, string defaultTopic,
@@ -214,7 +243,7 @@ public class ChmProjectGenerator
             sb.AppendLine("<ul>");
             sb.AppendLine("    <li><object type=\"text/sitemap\">");
             sb.AppendLine($"        <param name=\"Name\" value=\"{EscapeXml(title)}\">");
-            sb.AppendLine($"        <param name=\"Local\" value=\"{defaultTopic}\">");
+            sb.AppendLine($"        <param name=\"Local\" value=\"{SafeHhcRelativePath(defaultTopic)}\">");
             sb.AppendLine("    </object>");
         }
 
@@ -235,7 +264,7 @@ public class ChmProjectGenerator
         sb.AppendLine("</body>");
         sb.AppendLine("</html>");
 
-        File.WriteAllText(hhcPath, sb.ToString(), Encoding.GetEncoding("GB2312"));
+        File.WriteAllBytes(hhcPath, Encoding.GetEncoding("GB2312").GetBytes(sb.ToString()));
     }
 
     private void BuildHhcNode(StringBuilder sb, Models.DocumentNode node, int level)
@@ -261,7 +290,7 @@ public class ChmProjectGenerator
             // 文件节点
             sb.AppendLine($"{indent}<li><object type=\"text/sitemap\">");
             sb.AppendLine($"{indent}    <param name=\"Name\" value=\"{EscapeXml(node.Title)}\">");
-            sb.AppendLine($"{indent}    <param name=\"Local\" value=\"{node.RelativePath}\">");
+            sb.AppendLine($"{indent}    <param name=\"Local\" value=\"{SafeHhcRelativePath(node.RelativePath)}\">");
             sb.AppendLine($"{indent}</object>");
             sb.AppendLine($"{indent}</li>");
         }
@@ -284,7 +313,7 @@ public class ChmProjectGenerator
         {
             sb.AppendLine($"<li><object type=\"text/sitemap\">");
             sb.AppendLine($"  <param name=\"Name\" value=\"{EscapeXml(file.Title)}\">");
-            sb.AppendLine($"  <param name=\"Local\" value=\"{file.RelativePath}\">");
+            sb.AppendLine($"  <param name=\"Local\" value=\"{SafeHhcRelativePath(file.RelativePath)}\">");
             sb.AppendLine($"</object></li>");
         }
 
@@ -292,7 +321,7 @@ public class ChmProjectGenerator
         sb.AppendLine("</body>");
         sb.AppendLine("</html>");
 
-        File.WriteAllText(hhkPath, sb.ToString(), Encoding.GetEncoding("GB2312"));
+        File.WriteAllBytes(hhkPath, Encoding.GetEncoding("GB2312").GetBytes(sb.ToString()));
     }
 
     private static string EscapeXml(string text)
@@ -315,6 +344,91 @@ public class ChmProjectGenerator
         }
         var result = sb.ToString().Trim();
         return string.IsNullOrEmpty(result) ? "untitled" : result;
+    }
+
+    /// <summary>
+    /// 把文件名转换成 hhc.exe 能稳定编译的安全文件名。
+    /// hhc.exe 4.74 对文件名兼容性极差，需要避免：
+    ///   - 半角括号 () [] {}  ← 会被当作参数分隔符
+    ///   - 空格                ← 路径解析时会被截断
+    ///   - 多个点 .            ← V3.1.0 会让 hhc.exe 误判扩展名
+    ///   - & + 等特殊字符      ← URL/path 解析问题
+    /// 保留：中文字符、字母数字、下划线、连字符、单个点
+    /// </summary>
+    private static string SafeHhcFileName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "untitled";
+
+        // 找到最后一个点的位置（作为扩展名分隔符保留）
+        // 修复 v2.5 的 Bug：之前只保留第一个点，导致 .html 的点被替换成下划线
+        int lastDotIndex = name.LastIndexOf('.');
+
+        var sb = new StringBuilder();
+        for (int i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+
+            if (c == '.')
+            {
+                // 最后一个点保留（扩展名分隔符），其他点替换为下划线
+                if (i == lastDotIndex && lastDotIndex > 0)
+                {
+                    sb.Append(c);
+                }
+                else
+                {
+                    sb.Append('_');
+                }
+                continue;
+            }
+
+            // hhc.exe 不友好的字符全部替换为下划线
+            if (c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}')
+            {
+                sb.Append('_');
+                continue;
+            }
+            if (char.IsWhiteSpace(c))
+            {
+                sb.Append('_');
+                continue;
+            }
+            if (c == '&' || c == '+' || c == '#' || c == '%' || c == '!' || c == '@' ||
+                c == '$' || c == '^' || c == '*' || c == '|' || c == ';' || c == ',' ||
+                c == '\'' || c == '"' || c == '<' || c == '>' || c == '?' || c == '`' ||
+                c == '=')
+            {
+                sb.Append('_');
+                continue;
+            }
+
+            // 其他字符（中文、字母、数字、下划线、连字符）保留
+            sb.Append(c);
+        }
+
+        // 折叠连续的下划线
+        var result = sb.ToString();
+        while (result.Contains("__"))
+        {
+            result = result.Replace("__", "_");
+        }
+        result = result.Trim('_');
+
+        return string.IsNullOrEmpty(result) ? "untitled" : result;
+    }
+
+    /// <summary>
+    /// 把一个完整路径（含目录）的每个部分都安全化
+    /// </summary>
+    private static string SafeHhcRelativePath(string relativePath)
+    {
+        if (string.IsNullOrEmpty(relativePath)) return relativePath;
+        var parts = relativePath.Split('/');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            parts[i] = SafeHhcFileName(parts[i]);
+        }
+        return string.Join("/", parts);
     }
 }
 
@@ -413,6 +527,18 @@ public class ChmCompiler
                 result.Success = false;
                 result.ErrorMessage = "未生成 CHM 文件";
             }
+
+            //// v2.8: 失败时收集诊断信息，附加到 OutputLog 让用户看到
+            //if (!result.Success)
+            //{
+            //    // v2.12: 加 hhc.exe 环境全面诊断
+            //    var envDiag = DiagnoseHhcEnvironment();
+            //    result.OutputLog = envDiag + "\r\n\r\n" + result.OutputLog;
+
+
+            //    var diagnostics = CollectDiagnostics(project, result.OutputLog);
+            //    result.OutputLog = diagnostics + "\r\n\r\n" + result.OutputLog;
+            //}
         }
         catch (Exception ex)
         {
@@ -428,6 +554,269 @@ public class ChmCompiler
         // HHC5003 是路径错误，HHC4002 是编码错误，都是致命的
         return log.Contains("HHC5003") || log.Contains("HHC4002") ||
                log.Contains("Error:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 全面诊断 hhc.exe 环境
+    /// </summary>
+    public string DiagnoseHhcEnvironment()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("=== hhc.exe 环境全面诊断 ===");
+
+        var hhcPath = HhcLocator.Find();
+        sb.AppendLine($"1. hhc.exe 路径: {hhcPath ?? "<未找到>"}");
+
+        if (string.IsNullOrEmpty(hhcPath))
+        {
+            sb.AppendLine("   ❌ 未找到 hhc.exe，请安装 HTML Help Workshop");
+            return sb.ToString();
+        }
+
+        // 检查 hhc.exe 文件
+        sb.AppendLine();
+        sb.AppendLine("2. hhc.exe 文件信息:");
+        try
+        {
+            var fi = new FileInfo(hhcPath);
+            sb.AppendLine($"   路径: {fi.FullName}");
+            sb.AppendLine($"   大小: {fi.Length} bytes");
+            sb.AppendLine($"   修改时间: {fi.LastWriteTime}");
+            sb.AppendLine($"   版本: {FileVersionInfo.GetVersionInfo(hhcPath).FileVersion ?? "<无>"}");
+        }
+        catch (Exception ex) { sb.AppendLine($"   读取失败: {ex.Message}"); }
+
+        // 检查 Workshop 目录下的依赖文件
+        sb.AppendLine();
+        sb.AppendLine("3. HTML Help Workshop 目录文件:");
+        var workshopDir = Path.GetDirectoryName(hhcPath) ?? "";
+        var requiredFiles = new[] { "hhc.exe", "ha.dll", "hhdt.dll", "itcc.dll", "itircl.dll", "itss.dll", "hha.dll" };
+        foreach (var f in requiredFiles)
+        {
+            var full = Path.Combine(workshopDir, f);
+            var exists = File.Exists(full);
+            sb.AppendLine($"   {f}: {(exists ? "✓ 存在" : "❌ 缺失")}");
+        }
+
+        // 检查系统目录下的 itss.dll 和 itircl.dll
+        sb.AppendLine();
+        sb.AppendLine("4. 系统 DLL 检查:");
+        var systemDlls = new[] {
+            @"C:\Windows\System32\itss.dll",
+            @"C:\Windows\System32\itircl.dll",
+            @"C:\Windows\System32\itcc.dll",
+            @"C:\Windows\SysWOW64\itss.dll",
+            @"C:\Windows\SysWOW64\itircl.dll",
+            @"C:\Windows\SysWOW64\itcc.dll",
+        };
+        foreach (var dll in systemDlls)
+        {
+            var exists = File.Exists(dll);
+            sb.AppendLine($"   {dll}: {(exists ? "✓" : "❌")}");
+        }
+
+        // 检查注册表里 itss.dll 是否注册
+        sb.AppendLine();
+        sb.AppendLine("5. 注册表检查 (itss.dll 注册状态):");
+        try
+        {
+            using var key = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey("CLSID\\{4662DAE1-C9C3-101A-8676-040224009C02}");
+            if (key != null)
+            {
+                sb.AppendLine("   ✓ itss.dll 已注册 (CLSID found)");
+            }
+            else
+            {
+                sb.AppendLine("   ❌ itss.dll 未注册！");
+                sb.AppendLine("   → 请以管理员身份运行: regsvr32 C:\\Windows\\System32\\itss.dll");
+            }
+        }
+        catch (Exception ex) { sb.AppendLine($"   检查失败: {ex.Message}"); }
+
+        // 检查 itircl.dll 注册
+        try
+        {
+            using var key = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey("CLSID\\{4662DAE2-C9C3-101A-8676-040224009C02}");
+            if (key != null)
+            {
+                sb.AppendLine("   ✓ itircl.dll 已注册");
+            }
+            else
+            {
+                sb.AppendLine("   ❌ itircl.dll 未注册！");
+                sb.AppendLine("   → 请以管理员身份运行: regsvr32 C:\\Windows\\System32\\itircl.dll");
+            }
+        }
+        catch (Exception ex) { sb.AppendLine($"   检查失败: {ex.Message}"); }
+
+        // 6. 推荐修复步骤
+        sb.AppendLine();
+        sb.AppendLine("6. 推荐修复步骤:");
+        sb.AppendLine("   a) 以管理员身份运行 cmd，执行:");
+        sb.AppendLine("      regsvr32 C:\\Windows\\System32\\itss.dll");
+        sb.AppendLine("      regsvr32 C:\\Windows\\System32\\itircl.dll");
+        sb.AppendLine("      regsvr32 C:\\Windows\\System32\\itcc.dll");
+        sb.AppendLine("      regsvr32 C:\\Windows\\SysWOW64\\itss.dll");
+        sb.AppendLine("      regsvr32 C:\\Windows\\SysWOW64\\itircl.dll");
+        sb.AppendLine("      regsvr32 C:\\Windows\\SysWOW64\\itcc.dll");
+        sb.AppendLine("   b) 重装 HTML Help Workshop 1.32:");
+        sb.AppendLine("      https://learn.microsoft.com/en-us/previous-versions/windows/desktop/htmlhelp/microsoft-html-help-downloads");
+        sb.AppendLine("   c) 关闭 DEP（数据执行保护）对 hhc.exe:");
+        sb.AppendLine("      系统属性 → 高级 → 性能 → DEP → 为 hhc.exe 关闭 DEP");
+        sb.AppendLine("   d) 检查 360/安全软件是否拦截 hhc.exe");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 不区分大小写统计子字符串出现次数
+    /// </summary>
+    private static int CountOccurrences(string text, string pattern)
+    {
+        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(pattern)) return 0;
+        int count = 0;
+        int index = 0;
+        while ((index = text.IndexOf(pattern, index, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            count++;
+            index += pattern.Length;
+        }
+        return count;
+    }
+
+
+    /// <summary>
+    /// 编译失败时收集诊断信息，方便定位真正问题
+    /// </summary>
+    public string CollectDiagnostics(GeneratedProject project, string hhcOutputLog)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("=== 编译失败诊断信息 ===");
+
+        // 1. 检查 hhp 文件
+        if (File.Exists(project.HhpPath))
+        {
+            var fi = new FileInfo(project.HhpPath);
+            sb.AppendLine($"project.hhp: 存在, 大小={fi.Length} bytes");
+            // 输出 hhp 前 50 行
+            sb.AppendLine("--- project.hhp 前 50 行 ---");
+            try
+            {
+                var lines = File.ReadAllLines(project.HhpPath, Encoding.GetEncoding("GB2312"));
+                for (int i = 0; i < Math.Min(50, lines.Length); i++)
+                {
+                    sb.AppendLine($"  {i + 1}: {lines[i]}");
+                }
+            }
+            catch (Exception ex) { sb.AppendLine($"  读取失败: {ex.Message}"); }
+        }
+        else
+        {
+            sb.AppendLine("project.hhp: 不存在！");
+        }
+
+        // 2. 检查 src 目录下的 HTML 文件
+        sb.AppendLine();
+        sb.AppendLine($"--- src 目录: {project.SrcDir} ---");
+        if (Directory.Exists(project.SrcDir))
+        {
+            var htmlFiles = Directory.GetFiles(project.SrcDir, "*.html", SearchOption.AllDirectories);
+            sb.AppendLine($"HTML 文件数: {htmlFiles.Length}");
+            foreach (var f in htmlFiles.Take(5))
+            {
+                var fi = new FileInfo(f);
+                var relPath = Path.GetRelativePath(project.SrcDir, f);
+                sb.AppendLine($"  {relPath}: 大小={fi.Length} bytes");
+
+                // 输出每个 HTML 文件前 500 字符
+                try
+                {
+                    var content = File.ReadAllText(f, Encoding.GetEncoding("GB2312"));
+                    var preview = content.Length > 500 ? content.Substring(0, 500) + "..." : content;
+                    sb.AppendLine($"  --- 前 500 字符 ---");
+                    foreach (var line in preview.Split('\n').Take(15))
+                    {
+                        sb.AppendLine($"    {line.TrimEnd()}");
+                    }
+                }
+                catch (Exception ex) { sb.AppendLine($"    读取失败: {ex.Message}"); }
+
+                // v2.9: dump 文件前 64 字节十六进制，确认 BOM 和编码
+                try
+                {
+                    var bytes = File.ReadAllBytes(f);
+                    var hexPreview = bytes.Take(64).Select(b => b.ToString("X2")).Aggregate((a, b) => a + " " + b);
+                    sb.AppendLine($"  --- 前 64 字节十六进制 ---");
+                    sb.AppendLine($"    {hexPreview}");
+                    if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+                        sb.AppendLine($"    ⚠ 文件有 UTF-8 BOM！hhc.exe 可能不识别");
+                    else if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+                        sb.AppendLine($"    ⚠ 文件有 UTF-16 LE BOM！hhc.exe 不识别");
+                    else
+                        sb.AppendLine($"    ✓ 无 BOM");
+                }
+                catch (Exception ex) { sb.AppendLine($"    字节读取失败: {ex.Message}"); }
+
+                // v2.10: 扫描 hhc.exe 不友好的 HTML/CSS 模式
+                try
+                {
+                    var fullContent = File.ReadAllText(f, Encoding.GetEncoding("GB2312"));
+                    sb.AppendLine($"  --- hhc.exe 不友好模式扫描 ---");
+                    sb.AppendLine($"    文件总长度: {fullContent.Length} 字符");
+                    sb.AppendLine($"    data: URI 出现次数: {CountOccurrences(fullContent, "data:")}");
+                    sb.AppendLine($"    base64 出现次数: {CountOccurrences(fullContent, "base64")}");
+                    sb.AppendLine($"    <script 标签: {CountOccurrences(fullContent, "<script")}");
+                    sb.AppendLine($"    <svg 标签: {CountOccurrences(fullContent, "<svg")}");
+                    sb.AppendLine($"    <iframe 标签: {CountOccurrences(fullContent, "<iframe")}");
+                    sb.AppendLine($"    <object 标签: {CountOccurrences(fullContent, "<object")}");
+                    sb.AppendLine($"    CSS content: : {CountOccurrences(fullContent, "content:")}");
+                    sb.AppendLine($"    CSS @media: {CountOccurrences(fullContent, "@media")}");
+                    sb.AppendLine($"    CSS :hover: {CountOccurrences(fullContent, ":hover")}");
+                    sb.AppendLine($"    CSS :first-child: {CountOccurrences(fullContent, ":first-child")}");
+                    sb.AppendLine($"    CSS :nth-child: {CountOccurrences(fullContent, ":nth-child")}");
+                    sb.AppendLine($"    background-image: : {CountOccurrences(fullContent, "background-image:")}");
+                    sb.AppendLine($"    javascript: : {CountOccurrences(fullContent, "javascript:")}");
+                    sb.AppendLine($"    <!-- 注释: {CountOccurrences(fullContent, "<!--")}");
+                    sb.AppendLine($"    <col 标签: {CountOccurrences(fullContent, "<col")}");
+                    sb.AppendLine($"    <colgroup 标签: {CountOccurrences(fullContent, "<colgroup")}");
+                    sb.AppendLine($"    &nbsp;: {CountOccurrences(fullContent, "&nbsp;")}");
+                    sb.AppendLine($"    &amp;: {CountOccurrences(fullContent, "&amp;")}");
+                    sb.AppendLine($"    &lt;: {CountOccurrences(fullContent, "&lt;")}");
+
+                    // 输出 HTML 完整内容（最多 8000 字符）
+                    sb.AppendLine($"  --- HTML 完整内容 (前 8000 字符) ---");
+                    var fullPreview = fullContent.Length > 8000 ? fullContent.Substring(0, 8000) + $"\r\n... (截断，总长 {fullContent.Length})" : fullContent;
+                    sb.AppendLine(fullPreview);
+                }
+                catch (Exception ex) { sb.AppendLine($"    扫描失败: {ex.Message}"); }
+            }
+        }
+        else
+        {
+            sb.AppendLine("src 目录不存在！");
+        }
+
+        // 3. 检查 CHM 输出目录是否可写
+        sb.AppendLine();
+        sb.AppendLine($"--- 输出目录: {project.OutputDir} ---");
+        try
+        {
+            var testFile = Path.Combine(project.OutputDir, $"chmgen_test_{Guid.NewGuid():N}.tmp");
+            File.WriteAllText(testFile, "test");
+            File.Delete(testFile);
+            sb.AppendLine("输出目录: 可写 ✓");
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"输出目录: 不可写 ✗ - {ex.Message}");
+        }
+
+        // 4. 输出 hhc.exe 完整日志
+        sb.AppendLine();
+        sb.AppendLine("--- hhc.exe 完整输出 ---");
+        sb.AppendLine(hhcOutputLog);
+
+        return sb.ToString();
     }
 }
 

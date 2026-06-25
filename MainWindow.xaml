@@ -53,6 +53,7 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <!-- 添加文件按钮组 -->
@@ -125,9 +126,20 @@
                 </Button>
 
                 <Button Grid.Column="6" Style="{StaticResource ToolbarButton}"
+                        Click="Settings_Click"
+                        ToolTip="外部工具配置（Python doc2html / CHMGenerator）"
+                        Margin="0,0,8,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="⚙" Margin="0,0,4,0"/>
+                        <TextBlock Text="设置"/>
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="7" Style="{StaticResource ToolbarButton}"
                         Command="{Binding LocateHhcCommand}"
-                        ToolTip="手动指定 hhc.exe 位置">
-                    <TextBlock Text="⚙"/>
+                        ToolTip="手动指定 hhc.exe 位置"
+                        Margin="0,0,0,0">
+                    <TextBlock Text="🔧"/>
                 </Button>
             </Grid>
         </Border>
@@ -145,6 +157,13 @@
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
                     <TextBlock Text="状态: " Foreground="#C9D7E8"/>
                     <TextBlock Text="{Binding StatusText}" Foreground="White"/>
+                    <TextBlock Text=" | " Foreground="#C9D7E8" Margin="8,0"/>
+                    <TextBlock Text="📁" Foreground="#C9D7E8" Cursor="Hand"
+                               ToolTip="打开日志文件夹"
+                               MouseLeftButtonDown="OpenLogs_Click"/>
+                    <TextBlock Text=" 日志" Foreground="#C9D7E8" Cursor="Hand"
+                               ToolTip="打开日志文件夹"
+                               MouseLeftButtonDown="OpenLogs_Click"/>
                 </StackPanel>
 
                 <TextBlock Grid.Column="1" Text="{Binding HhcStatus}"

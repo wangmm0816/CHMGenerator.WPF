@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using CHMGenerator.WPF.Models;
 using CHMGenerator.WPF.ViewModels;
+using CHMGenerator.WPF.Views;
 
 namespace CHMGenerator.WPF;
 
@@ -24,6 +25,26 @@ public partial class MainWindow : Window
         {
             vm.SelectedNode = null;
         }
+    }
+
+    /// <summary>
+    /// 打开设置窗口
+    /// </summary>
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        var settingsWindow = new SettingsWindow
+        {
+            Owner = this
+        };
+        settingsWindow.ShowDialog();
+    }
+
+    /// <summary>
+    /// 打开日志文件夹
+    /// </summary>
+    private void OpenLogs_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        Services.LogManager.Instance.OpenLogDirectory();
     }
 
     /// <summary>

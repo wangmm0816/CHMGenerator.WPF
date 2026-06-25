@@ -30,6 +30,12 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _lastChmPath = "";
     [ObservableProperty] private string _logText = "";
 
+    // 监听 StatusText 变化，自动记录到日志
+    partial void OnStatusTextChanged(string value)
+    {
+        LogManager.Instance.WriteStatus(value);
+    }
+
     /// <summary>文档树根节点列表</summary>
     public ObservableCollection<DocumentNode> RootNodes { get; } = new();
 
@@ -43,6 +49,11 @@ public partial class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        // 初始化日志管理
+        LogManager.Instance.StartNewSession();
+        LogManager.Instance.WriteOperation("程序启动");
+        LogManager.Instance.CleanOldLogs(30); // 清理30天前的日志
+
         UpdateHhcStatus();
         RootNodes.CollectionChanged += (_, _) => RefreshPreview();
         Helpers.TreeViewDragDropHelper.NodeDropped += OnNodeDropped;
@@ -386,9 +397,13 @@ public partial class MainViewModel : ObservableObject
 
         // 根据当前选中节点决定添加到哪个文件夹下
         var targetFolder = GetTargetFolderForAdd();
+
+        LogManager.Instance.WriteOperation($"添加文件: {dlg.FileNames.Length} 个文件");
+
         foreach (var file in dlg.FileNames)
         {
             AddFileToNode(file, targetFolder);
+            LogManager.Instance.WriteOperation($"  - {Path.GetFileName(file)}");
         }
 
         // 展开目标文件夹，让用户看到刚加入的文件
@@ -569,6 +584,8 @@ public partial class MainViewModel : ObservableObject
     {
         if (node == null) return;
 
+        LogManager.Instance.WriteOperation($"删除节点: {node.Title}");
+
         if (node.Parent == null)
         {
             RootNodes.Remove(node);
@@ -628,6 +645,26 @@ public partial class MainViewModel : ObservableObject
         IsBusy = true;
         ProgressValue = 0;
         AppendLog($"=== 开始生成 CHM: {ProjectTitle} ===");
+        AppendLog($"输出目录: {outputDir}");
+        AppendLog($"临时目录: {tempDir}");
+
+        // 检查是否使用外部工具
+        var config = ToolConfiguration.Instance;
+
+        // 记录配置状态
+        AppendLog($"- 配置检查:");
+        AppendLog($"  UsePythonConverter = {config.UsePythonConverter}");
+        AppendLog($"  PythonToolsPath = {config.PythonToolsPath}");
+        AppendLog($"  IsPythonAvailable = {config.IsPythonAvailable()}");
+
+        if (config.IsPythonAvailable())
+        {
+            AppendLog($"- 转换模式: 使用 Python doc2html");
+        }
+        else
+        {
+            AppendLog($"- 转换模式: 使用内置转换器 (OpenXmlPowerTools)");
+        }
 
         try
         {
@@ -641,39 +678,58 @@ public partial class MainViewModel : ObservableObject
                 ProgressText = $"正在转换 Word 文件 (0/{wordNodes.Count})...";
                 AppendLog($"- 转换 {wordNodes.Count} 个 Word 文件...");
 
-                int done = 0;
-                foreach (var wordNode in wordNodes)
+                // 根据配置选择转换方式
+                if (config.IsPythonAvailable())
                 {
-                    try
-                    {
-                        var r = _wordConverter.ConvertToHtml(wordNode.SourcePath, tempDir,
-                            baseName: wordNode.Title);
-                        wordNode.ConvertedHtmlPath = r.HtmlPath;
-                        if (!string.IsNullOrEmpty(r.Title) && r.Title != wordNode.Title)
-                        {
-                            // 保留用户的 Title 编辑，不覆盖
-                        }
-                        AppendLog($"  ✓ {Path.GetFileName(wordNode.SourcePath)} → {r.Title}");
-                    }
-                    catch (Exception ex)
-                    {
-                        AppendLog($"  ✗ {Path.GetFileName(wordNode.SourcePath)}: {ex.Message}");
-                    }
-                    done++;
-                    ProgressValue = done * 50.0 / wordNodes.Count;
-                    ProgressText = $"正在转换 Word 文件 ({done}/{wordNodes.Count})...";
-                    await Task.Yield();
+                    await ConvertWordsUsingPython(wordNodes, tempDir, config.PythonToolsPath);
+                }
+                else
+                {
+                    await ConvertWordsUsingBuiltIn(wordNodes, tempDir);
+                }
+            }
+            else
+            {
+                AppendLog($"- 没有 Word 文件需要转换");
+            }
+
+            // 检查所有文件节点是否有效
+            var allFileNodes = RootNodes.SelectMany(r => r.GetAllFileNodes()).ToList();
+            AppendLog($"- 总文件数: {allFileNodes.Count}");
+
+            int validCount = 0;
+            int invalidCount = 0;
+            foreach (var node in allFileNodes)
+            {
+                if (!string.IsNullOrEmpty(node.EffectiveHtmlPath) && File.Exists(node.EffectiveHtmlPath))
+                {
+                    validCount++;
+                    AppendLog($"  ✓ {node.Title}: {node.EffectiveHtmlPath}");
+                }
+                else
+                {
+                    invalidCount++;
+                    AppendLog($"  ✗ {node.Title}: HTML 路径无效或文件不存在 ({node.EffectiveHtmlPath})");
                 }
             }
 
+            AppendLog($"- 有效文件: {validCount}, 无效文件: {invalidCount}");
+
+            if (validCount == 0)
+            {
+                MessageBox.Show("没有有效的 HTML 文件，无法生成 CHM。请确保：\n1. HTML 文件已添加且存在\n2. Word 文件已成功转换", "错误");
+                return;
+            }
+
             // 2. 确定默认首页
-            var firstFile = RootNodes.SelectMany(r => r.GetAllFileNodes()).FirstOrDefault();
+            var firstFile = allFileNodes.FirstOrDefault(n => !string.IsNullOrEmpty(n.EffectiveHtmlPath) && File.Exists(n.EffectiveHtmlPath));
             if (firstFile == null)
             {
                 MessageBox.Show("没有可用的文件，无法生成 CHM", "错误");
                 return;
             }
             var defaultTopic = firstFile.RelativePath;
+            AppendLog($"- 默认首页: {defaultTopic}");
 
             // 3. 生成工程文件
             ProgressText = "正在生成工程文件...";
@@ -727,7 +783,9 @@ public partial class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             AppendLog($"[异常] {ex.Message}");
-            MessageBox.Show($"发生异常：{ex.Message}", "错误");
+            AppendLog($"[堆栈] {ex.StackTrace}");
+            MessageBox.Show($"发生异常：{ex.Message}\n\n详见日志。", "错误");
+            StatusText = "生成失败，请查看日志";
         }
         finally
         {
@@ -819,6 +877,91 @@ public partial class MainViewModel : ObservableObject
     private void AppendLog(string line)
     {
         LogText += line + Environment.NewLine;
+
+        // 同时写入编译日志文件
+        LogManager.Instance.WriteCompile(line);
+    }
+
+    /// <summary>
+    /// 使用 Python doc2html 转换 Word 文件
+    /// </summary>
+    private async Task ConvertWordsUsingPython(List<DocumentNode> wordNodes, string tempDir, string pythonToolsPath)
+    {
+        int done = 0;
+        var progress = new Progress<string>(msg => AppendLog($"    {msg}"));
+
+        foreach (var wordNode in wordNodes)
+        {
+            try
+            {
+                var outputSubDir = Path.Combine(tempDir, $"word_{done + 1}");
+                var htmlPath = await ExternalToolsIntegration.ConvertWordToPythonHtml(
+                    pythonToolsPath,
+                    wordNode.SourcePath,
+                    outputSubDir,
+                    progress);
+
+                if (!string.IsNullOrEmpty(htmlPath) && File.Exists(htmlPath))
+                {
+                    wordNode.ConvertedHtmlPath = htmlPath;
+                    AppendLog($"  ✓ {Path.GetFileName(wordNode.SourcePath)} → {Path.GetFileName(htmlPath)}");
+                }
+                else
+                {
+                    AppendLog($"  ✗ {Path.GetFileName(wordNode.SourcePath)}: Python 转换失败，尝试使用内置转换器");
+                    // 回退到内置转换器
+                    try
+                    {
+                        var r = _wordConverter.ConvertToHtml(wordNode.SourcePath, tempDir, baseName: wordNode.Title);
+                        wordNode.ConvertedHtmlPath = r.HtmlPath;
+                        AppendLog($"  ✓ (内置) {Path.GetFileName(wordNode.SourcePath)} → {r.Title}");
+                    }
+                    catch (Exception ex2)
+                    {
+                        AppendLog($"  ✗ (内置) {Path.GetFileName(wordNode.SourcePath)}: {ex2.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"  ✗ {Path.GetFileName(wordNode.SourcePath)}: {ex.Message}");
+            }
+
+            done++;
+            ProgressValue = done * 50.0 / wordNodes.Count;
+            ProgressText = $"正在转换 Word 文件 ({done}/{wordNodes.Count})...";
+            await Task.Yield();
+        }
+    }
+
+    /// <summary>
+    /// 使用内置转换器 (OpenXmlPowerTools) 转换 Word 文件
+    /// </summary>
+    private async Task ConvertWordsUsingBuiltIn(List<DocumentNode> wordNodes, string tempDir)
+    {
+        int done = 0;
+        foreach (var wordNode in wordNodes)
+        {
+            try
+            {
+                var r = _wordConverter.ConvertToHtml(wordNode.SourcePath, tempDir,
+                    baseName: wordNode.Title);
+                wordNode.ConvertedHtmlPath = r.HtmlPath;
+                if (!string.IsNullOrEmpty(r.Title) && r.Title != wordNode.Title)
+                {
+                    // 保留用户的 Title 编辑，不覆盖
+                }
+                AppendLog($"  ✓ {Path.GetFileName(wordNode.SourcePath)} → {r.Title}");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"  ✗ {Path.GetFileName(wordNode.SourcePath)}: {ex.Message}");
+            }
+            done++;
+            ProgressValue = done * 50.0 / wordNodes.Count;
+            ProgressText = $"正在转换 Word 文件 ({done}/{wordNodes.Count})...";
+            await Task.Yield();
+        }
     }
 }
 

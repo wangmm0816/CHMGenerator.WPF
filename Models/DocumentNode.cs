@@ -157,11 +157,31 @@ public class DocumentNode : INotifyPropertyChanged
             {
                 if (!string.IsNullOrEmpty(current.Title))
                 {
-                    // 文件夹用 Title，文件用 EffectiveHtmlPath 的文件名
-                    var name = current.IsFolder
-                        ? SanitizeFileName(current.Title)
-                        : Path.GetFileName(current.EffectiveHtmlPath);
-                    parts.Insert(0, name);
+                    // 文件夹用 Title，文件用 HTML 文件名
+                    if (current.IsFolder)
+                    {
+                        parts.Insert(0, SanitizeFileName(current.Title));
+                    }
+                    else
+                    {
+                        // 文件节点：如果有 EffectiveHtmlPath，使用其文件名；否则根据 Title 生成
+                        var htmlPath = current.EffectiveHtmlPath;
+                        if (!string.IsNullOrEmpty(htmlPath) && File.Exists(htmlPath))
+                        {
+                            parts.Insert(0, Path.GetFileName(htmlPath));
+                        }
+                        else
+                        {
+                            // 如果 HTML 路径还不存在（转换前），用 Title + .html
+                            var fileName = SanitizeFileName(current.Title);
+                            if (!fileName.EndsWith(".html", StringComparison.OrdinalIgnoreCase) &&
+                                !fileName.EndsWith(".htm", StringComparison.OrdinalIgnoreCase))
+                            {
+                                fileName += ".html";
+                            }
+                            parts.Insert(0, fileName);
+                        }
+                    }
                 }
                 current = current.Parent;
             }
