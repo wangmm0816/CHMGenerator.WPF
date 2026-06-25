@@ -667,13 +667,18 @@ public partial class MainViewModel : ObservableObject
         }
 
         var srcDir = Path.Combine(outputDir, "src");
+        var htmlDir = Path.Combine(outputDir, "html");  // Python 生成的 HTML 存放位置
         var tempDir = Path.Combine(Path.GetTempPath(), $"CHMGen_{Guid.NewGuid():N}");
+
+        Directory.CreateDirectory(srcDir);
+        Directory.CreateDirectory(htmlDir);
         Directory.CreateDirectory(tempDir);
 
         IsBusy = true;
         ProgressValue = 0;
         AppendLog($"=== 开始生成 CHM: {ProjectTitle} ===");
         AppendLog($"输出目录: {outputDir}");
+        AppendLog($"HTML 目录: {htmlDir}");
         AppendLog($"临时目录: {tempDir}");
 
         // 检查是否使用外部工具
@@ -684,6 +689,9 @@ public partial class MainViewModel : ObservableObject
         AppendLog($"  UsePythonConverter = {config.UsePythonConverter}");
         AppendLog($"  PythonToolsPath = {config.PythonToolsPath}");
         AppendLog($"  IsPythonAvailable = {config.IsPythonAvailable()}");
+
+        // 用于存储 Python 生成的 txt 配置文件
+        var pythonTxtConfigs = new List<string>();
 
         if (config.IsPythonAvailable())
         {
@@ -709,7 +717,7 @@ public partial class MainViewModel : ObservableObject
                 // 根据配置选择转换方式
                 if (config.IsPythonAvailable())
                 {
-                    await ConvertWordsUsingPython(wordNodes, tempDir, config.PythonToolsPath);
+                    pythonTxtConfigs = await ConvertWordsUsingPythonWithConfig(wordNodes, htmlDir, config.PythonToolsPath);
                 }
                 else
                 {
@@ -766,7 +774,7 @@ public partial class MainViewModel : ObservableObject
 
             var project = _projectGenerator.Generate(
                 outputDir, srcDir, ProjectTitle, defaultTopic, RootNodes,
-                FullTextSearch, BinaryToc, AutoIndex);
+                FullTextSearch, BinaryToc, AutoIndex, pythonTxtConfigs);
 
             AppendLog($"  ✓ project.hhp");
             AppendLog($"  ✓ toc.hhc");
@@ -821,6 +829,76 @@ public partial class MainViewModel : ObservableObject
             // 清理临时目录
             try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
         }
+    }
+
+    /// <summary>
+    /// 使用 Python doc2html 转换 Word 文件，并返回生成的 txt 配置文件列表
+    /// </summary>
+    private async Task<List<string>> ConvertWordsUsingPythonWithConfig(List<DocumentNode> wordNodes, string tempDir, string pythonToolsPath)
+    {
+        var txtConfigFiles = new List<string>();
+        int done = 0;
+        var progress = new Progress<string>(msg => AppendLog($"    {msg}"));
+
+        foreach (var wordNode in wordNodes)
+        {
+            try
+            {
+                var title = wordNode.Title;
+                var result = await ExternalToolsIntegration.ConvertWordToPythonHtml(
+                    pythonToolsPath,
+                    wordNode.SourcePath,
+                    tempDir,
+                    title,
+                    progress);
+
+                if (result.Success && !string.IsNullOrEmpty(result.HtmlDirectory))
+                {
+                    // Python 生成的 HTML 文件在 result.HtmlDirectory 下
+                    var htmlFiles = Directory.GetFiles(result.HtmlDirectory, "*.html", SearchOption.TopDirectoryOnly);
+
+                    if (htmlFiles.Length > 0)
+                    {
+                        // 优先查找与输出目录同名的 HTML 文件
+                        var mainHtmlFile = htmlFiles.FirstOrDefault(f =>
+                            Path.GetFileNameWithoutExtension(f).Equals(result.OutputSubDirName, StringComparison.OrdinalIgnoreCase))
+                            ?? htmlFiles[0];
+
+                        wordNode.ConvertedHtmlPath = mainHtmlFile;
+                        AppendLog($"  ✓ {Path.GetFileName(wordNode.SourcePath)} → {Path.GetFileName(mainHtmlFile)}");
+
+                        // 记录 txt 配置文件
+                        if (!string.IsNullOrEmpty(result.TxtConfigFile) && File.Exists(result.TxtConfigFile))
+                        {
+                            txtConfigFiles.Add(result.TxtConfigFile);
+                            AppendLog($"    配置文件: {result.TxtConfigFile}");
+                        }
+                    }
+                    else
+                    {
+                        AppendLog($"  ✗ {Path.GetFileName(wordNode.SourcePath)}: 未找到生成的 HTML 文件");
+                        await FallbackToBuiltInConverter(wordNode, tempDir);
+                    }
+                }
+                else
+                {
+                    AppendLog($"  ✗ {Path.GetFileName(wordNode.SourcePath)}: {result.ErrorMessage}");
+                    await FallbackToBuiltInConverter(wordNode, tempDir);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"  ✗ {Path.GetFileName(wordNode.SourcePath)}: {ex.Message}");
+                await FallbackToBuiltInConverter(wordNode, tempDir);
+            }
+
+            done++;
+            ProgressValue = done * 50.0 / wordNodes.Count;
+            ProgressText = $"正在转换 Word 文件 ({done}/{wordNodes.Count})...";
+            await Task.Yield();
+        }
+
+        return txtConfigFiles;
     }
 
     [RelayCommand]
@@ -955,37 +1033,55 @@ public partial class MainViewModel : ObservableObject
         {
             try
             {
-                var outputSubDir = Path.Combine(tempDir, $"word_{done + 1}");
-                var htmlPath = await ExternalToolsIntegration.ConvertWordToPythonHtml(
+                var title = wordNode.Title;
+                var result = await ExternalToolsIntegration.ConvertWordToPythonHtml(
                     pythonToolsPath,
                     wordNode.SourcePath,
-                    outputSubDir,
+                    tempDir,
+                    title,
                     progress);
 
-                if (!string.IsNullOrEmpty(htmlPath) && File.Exists(htmlPath))
+                if (result.Success && !string.IsNullOrEmpty(result.HtmlDirectory))
                 {
-                    wordNode.ConvertedHtmlPath = htmlPath;
-                    AppendLog($"  ✓ {Path.GetFileName(wordNode.SourcePath)} → {Path.GetFileName(htmlPath)}");
+                    // Python 生成的 HTML 文件在 result.HtmlDirectory 下
+                    // 查找主 HTML 文件（通常是第一个文件或与输出目录同名的文件）
+                    var htmlFiles = Directory.GetFiles(result.HtmlDirectory, "*.html", SearchOption.TopDirectoryOnly);
+
+                    if (htmlFiles.Length > 0)
+                    {
+                        // 优先查找与输出目录同名的 HTML 文件
+                        var mainHtmlFile = htmlFiles.FirstOrDefault(f =>
+                            Path.GetFileNameWithoutExtension(f).Equals(result.OutputSubDirName, StringComparison.OrdinalIgnoreCase))
+                            ?? htmlFiles[0];
+
+                        wordNode.ConvertedHtmlPath = mainHtmlFile;
+                        AppendLog($"  ✓ {Path.GetFileName(wordNode.SourcePath)} → {Path.GetFileName(mainHtmlFile)}");
+
+                        // 如果生成了 txt 配置文件，记录下来供后续使用
+                        if (!string.IsNullOrEmpty(result.TxtConfigFile))
+                        {
+                            AppendLog($"    配置文件: {result.TxtConfigFile}");
+                        }
+                    }
+                    else
+                    {
+                        AppendLog($"  ✗ {Path.GetFileName(wordNode.SourcePath)}: 未找到生成的 HTML 文件");
+                        // 回退到内置转换器
+                        await FallbackToBuiltInConverter(wordNode, tempDir);
+                    }
                 }
                 else
                 {
-                    AppendLog($"  ✗ {Path.GetFileName(wordNode.SourcePath)}: Python 转换失败，尝试使用内置转换器");
+                    AppendLog($"  ✗ {Path.GetFileName(wordNode.SourcePath)}: {result.ErrorMessage}");
                     // 回退到内置转换器
-                    try
-                    {
-                        var r = _wordConverter.ConvertToHtml(wordNode.SourcePath, tempDir, baseName: wordNode.Title);
-                        wordNode.ConvertedHtmlPath = r.HtmlPath;
-                        AppendLog($"  ✓ (内置) {Path.GetFileName(wordNode.SourcePath)} → {r.Title}");
-                    }
-                    catch (Exception ex2)
-                    {
-                        AppendLog($"  ✗ (内置) {Path.GetFileName(wordNode.SourcePath)}: {ex2.Message}");
-                    }
+                    await FallbackToBuiltInConverter(wordNode, tempDir);
                 }
             }
             catch (Exception ex)
             {
                 AppendLog($"  ✗ {Path.GetFileName(wordNode.SourcePath)}: {ex.Message}");
+                // 回退到内置转换器
+                await FallbackToBuiltInConverter(wordNode, tempDir);
             }
 
             done++;
@@ -993,6 +1089,25 @@ public partial class MainViewModel : ObservableObject
             ProgressText = $"正在转换 Word 文件 ({done}/{wordNodes.Count})...";
             await Task.Yield();
         }
+    }
+
+    /// <summary>
+    /// 回退到内置转换器
+    /// </summary>
+    private async Task FallbackToBuiltInConverter(DocumentNode wordNode, string tempDir)
+    {
+        AppendLog($"  → 尝试使用内置转换器");
+        try
+        {
+            var r = _wordConverter.ConvertToHtml(wordNode.SourcePath, tempDir, baseName: wordNode.Title);
+            wordNode.ConvertedHtmlPath = r.HtmlPath;
+            AppendLog($"  ✓ (内置) {Path.GetFileName(wordNode.SourcePath)} → {r.Title}");
+        }
+        catch (Exception ex2)
+        {
+            AppendLog($"  ✗ (内置) {Path.GetFileName(wordNode.SourcePath)}: {ex2.Message}");
+        }
+        await Task.CompletedTask;
     }
 
     /// <summary>

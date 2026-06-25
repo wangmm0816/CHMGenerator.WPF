@@ -12,44 +12,55 @@ public class ExternalToolsIntegration
 {
     /// <summary>
     /// 使用 Python DocToCHM.py 转换单个 Word 文档为 HTML
+    /// DocToCHM.py 输出结构：
+    /// - output/html/{out_html_dir}/*.html (HTML文件)
+    /// - output/html/{out_html_dir}/images/*.png (图片)
+    /// - output/html/{out_html_dir}.txt (目录结构配置)
+    /// - output/html/css/*, scripts/*, resource/* (公共资源)
     /// </summary>
     /// <param name="pythonToolsPath">Python 工具目录路径（包含 DocToCHM.py）</param>
     /// <param name="docxPath">Word 文档路径</param>
-    /// <param name="outputDir">输出目录</param>
+    /// <param name="outputDir">输出根目录（对应 -o 参数）</param>
+    /// <param name="title">文档标题（对应 -t 参数）</param>
     /// <param name="progress">进度报告</param>
-    /// <returns>转换后的 HTML 文件路径，失败返回空字符串</returns>
-    public static async Task<string> ConvertWordToPythonHtml(
+    /// <returns>包含生成的HTML目录和txt配置文件的结果对象</returns>
+    public static async Task<PythonConversionResult> ConvertWordToPythonHtml(
         string pythonToolsPath,
         string docxPath,
         string outputDir,
+        string title,
         IProgress<string>? progress = null)
     {
+        var result = new PythonConversionResult();
+
         if (!File.Exists(docxPath))
         {
-            progress?.Report($"Word 文件不存在: {docxPath}");
-            return "";
+            result.ErrorMessage = $"Word 文件不存在: {docxPath}";
+            progress?.Report(result.ErrorMessage);
+            return result;
         }
 
         var docToChmScript = Path.Combine(pythonToolsPath, "DocToCHM.py");
         if (!File.Exists(docToChmScript))
         {
-            progress?.Report($"未找到 Python 脚本: {docToChmScript}");
-            return "";
+            result.ErrorMessage = $"未找到 Python 脚本: {docToChmScript}";
+            progress?.Report(result.ErrorMessage);
+            return result;
         }
 
         try
         {
             Directory.CreateDirectory(outputDir);
 
-            // 生成唯一的输出子目录名
-            var outputSubDir = Path.GetFileNameWithoutExtension(docxPath);
-            outputSubDir = SanitizeFileName(outputSubDir);
+            // 生成唯一的输出子目录名（不包含非法字符）
+            var outputSubDirName = SanitizeFileName(Path.GetFileNameWithoutExtension(docxPath));
 
-            // 调用 Python: python DocToCHM.py <docx> <out_html_dir> -o <output_root>
+            // Python DocToCHM.py 参数：
+            // python DocToCHM.py <input_file> <out_html_dir> -o <output_dir> -t <title>
             var psi = new ProcessStartInfo
             {
                 FileName = "python",
-                Arguments = $"\"{docToChmScript}\" \"{docxPath}\" \"{outputSubDir}\" -o \"{outputDir}\"",
+                Arguments = $"\"{docToChmScript}\" \"{docxPath}\" \"{outputSubDirName}\" -o \"{outputDir}\" -t \"{title}\"",
                 WorkingDirectory = pythonToolsPath,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -90,67 +101,94 @@ public class ExternalToolsIntegration
 
             if (process.ExitCode == 0)
             {
-                // 查找生成的 HTML 文件
-                // Python 会在 outputDir/outputSubDir 下生成文件
-                var targetDir = Path.Combine(outputDir, outputSubDir);
-                if (Directory.Exists(targetDir))
+                // Python 输出结构：
+                // outputDir/html/{outputSubDirName}/ - HTML文件
+                // outputDir/html/{outputSubDirName}.txt - 配置文件
+                var htmlBaseDir = Path.Combine(outputDir, "html");
+                var htmlDir = Path.Combine(htmlBaseDir, outputSubDirName);
+                var txtFile = Path.Combine(htmlBaseDir, $"{outputSubDirName}.txt");
+
+                if (Directory.Exists(htmlDir))
                 {
-                    var htmlFiles = Directory.GetFiles(targetDir, "*.html", SearchOption.TopDirectoryOnly);
-                    if (htmlFiles.Length > 0)
+                    result.Success = true;
+                    result.HtmlDirectory = htmlDir;
+                    result.TxtConfigFile = File.Exists(txtFile) ? txtFile : "";
+                    result.OutputSubDirName = outputSubDirName;
+
+                    var htmlFiles = Directory.GetFiles(htmlDir, "*.html", SearchOption.AllDirectories);
+                    progress?.Report($"Python 转换成功: 生成 {htmlFiles.Length} 个 HTML 文件");
+                    progress?.Report($"  HTML 目录: {htmlDir}");
+                    if (File.Exists(txtFile))
                     {
-                        progress?.Report($"Python 转换成功: {htmlFiles[0]}");
-                        return htmlFiles[0];
+                        progress?.Report($"  配置文件: {txtFile}");
                     }
                 }
-
-                // 也可能直接在 outputDir 下
-                var htmlFiles2 = Directory.GetFiles(outputDir, "*.html", SearchOption.AllDirectories);
-                if (htmlFiles2.Length > 0)
+                else
                 {
-                    progress?.Report($"Python 转换成功: {htmlFiles2[0]}");
-                    return htmlFiles2[0];
+                    result.ErrorMessage = $"未找到生成的 HTML 目录: {htmlDir}";
+                    progress?.Report(result.ErrorMessage);
                 }
-
-                progress?.Report("Python 转换完成，但未找到生成的 HTML 文件");
-                return "";
             }
             else
             {
-                progress?.Report($"Python 转换失败，退出码: {process.ExitCode}");
+                result.ErrorMessage = $"Python 转换失败，退出码: {process.ExitCode}";
                 if (errorBuilder.Length > 0)
                 {
-                    progress?.Report($"错误输出: {errorBuilder}");
+                    result.ErrorMessage += $"\n错误输出: {errorBuilder}";
                 }
-                return "";
+                progress?.Report(result.ErrorMessage);
             }
+
+            return result;
         }
         catch (Exception ex)
         {
-            progress?.Report($"调用 Python 脚本失败: {ex.Message}");
-            return "";
+            result.ErrorMessage = $"调用 Python 脚本失败: {ex.Message}";
+            progress?.Report(result.ErrorMessage);
+            return result;
         }
     }
 
     /// <summary>
-    /// 批量转换多个 Word 文档（可选：使用 DocToHtmlByDir.py 或循环调用 DocToCHM.py）
+    /// Python 转换结果
     /// </summary>
-    public static async Task<Dictionary<string, string>> ConvertMultipleWords(
+    public class PythonConversionResult
+    {
+        /// <summary>是否成功</summary>
+        public bool Success { get; set; }
+
+        /// <summary>生成的 HTML 文件所在目录</summary>
+        public string HtmlDirectory { get; set; } = "";
+
+        /// <summary>生成的 txt 配置文件路径（包含目录结构）</summary>
+        public string TxtConfigFile { get; set; } = "";
+
+        /// <summary>输出子目录名称</summary>
+        public string OutputSubDirName { get; set; } = "";
+
+        /// <summary>错误消息</summary>
+        public string ErrorMessage { get; set; } = "";
+    }
+
+    /// <summary>
+    /// 批量转换多个 Word 文档
+    /// </summary>
+    public static async Task<List<PythonConversionResult>> ConvertMultipleWords(
         string pythonToolsPath,
         List<string> docxPaths,
         string outputDir,
         IProgress<string>? progress = null)
     {
-        var results = new Dictionary<string, string>();
+        var results = new List<PythonConversionResult>();
 
         for (int i = 0; i < docxPaths.Count; i++)
         {
             var docxPath = docxPaths[i];
+            var title = Path.GetFileNameWithoutExtension(docxPath);
             progress?.Report($"转换 {i + 1}/{docxPaths.Count}: {Path.GetFileName(docxPath)}");
 
-            var subOutputDir = Path.Combine(outputDir, $"doc_{i + 1}");
-            var htmlPath = await ConvertWordToPythonHtml(pythonToolsPath, docxPath, subOutputDir, progress);
-
-            results[docxPath] = htmlPath;
+            var result = await ConvertWordToPythonHtml(pythonToolsPath, docxPath, outputDir, title, progress);
+            results.Add(result);
         }
 
         return results;

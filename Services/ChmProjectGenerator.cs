@@ -91,9 +91,11 @@ public class ChmProjectGenerator
     /// <param name="fullTextSearch">是否启用全文搜索</param>
     /// <param name="binaryToc">是否使用二进制 TOC</param>
     /// <param name="autoIndex">是否自动索引</param>
+    /// <param name="additionalTxtConfigs">额外的 txt 配置文件路径列表（来自 Python doc2html）</param>
     public GeneratedProject Generate(string outputDir, string srcDir, string title,
         string defaultTopic, IReadOnlyList<Models.DocumentNode> rootNodes,
-        bool fullTextSearch = true, bool binaryToc = true, bool autoIndex = true)
+        bool fullTextSearch = true, bool binaryToc = true, bool autoIndex = true,
+        List<string>? additionalTxtConfigs = null)
     {
         // 把所有文件复制到 src/ 下，按 RelativePath 摆放
         CopyFilesToSrc(srcDir, rootNodes);
@@ -105,9 +107,16 @@ public class ChmProjectGenerator
         // 收集所有文件节点
         var allFiles = rootNodes.SelectMany(r => r.GetAllFileNodes()).ToList();
 
-        GenerateHhp(hhpPath, srcDir, title, defaultTopic, allFiles, fullTextSearch, binaryToc, autoIndex);
-        GenerateHhc(hhcPath, srcDir, title, defaultTopic, rootNodes, binaryToc);
-        GenerateHhk(hhkPath, srcDir, allFiles);
+        // 如果有额外的 txt 配置文件，解析并合并
+        List<TxtConfigParser.ConfigEntry>? additionalEntries = null;
+        if (additionalTxtConfigs != null && additionalTxtConfigs.Count > 0)
+        {
+            additionalEntries = TxtConfigParser.ParseMultiple(additionalTxtConfigs.ToArray());
+        }
+
+        GenerateHhp(hhpPath, srcDir, title, defaultTopic, allFiles, fullTextSearch, binaryToc, autoIndex, additionalEntries);
+        GenerateHhc(hhcPath, srcDir, title, defaultTopic, rootNodes, binaryToc, additionalEntries);
+        GenerateHhk(hhkPath, srcDir, allFiles, additionalEntries);
 
         return new GeneratedProject
         {
@@ -190,7 +199,8 @@ public class ChmProjectGenerator
     }
 
     private void GenerateHhp(string hhpPath, string srcDir, string title, string defaultTopic,
-        List<Models.DocumentNode> allFiles, bool fullTextSearch, bool binaryToc, bool autoIndex)
+        List<Models.DocumentNode> allFiles, bool fullTextSearch, bool binaryToc, bool autoIndex,
+        List<TxtConfigParser.ConfigEntry>? additionalEntries = null)
     {
         var sb = new StringBuilder();
 
@@ -213,16 +223,27 @@ public class ChmProjectGenerator
         sb.AppendLine();
         sb.AppendLine("[FILES]");
 
+        // 添加来自文档树的文件
         foreach (var file in allFiles)
         {
             sb.AppendLine(SafeHhcRelativePath(file.RelativePath));
+        }
+
+        // 添加来自 txt 配置的文件
+        if (additionalEntries != null)
+        {
+            foreach (var entry in additionalEntries)
+            {
+                sb.AppendLine(SafeHhcRelativePath(entry.RelativePath));
+            }
         }
 
         File.WriteAllBytes(hhpPath, Encoding.GetEncoding("GB2312").GetBytes(sb.ToString()));
     }
 
     private void GenerateHhc(string hhcPath, string srcDir, string title, string defaultTopic,
-        IReadOnlyList<Models.DocumentNode> rootNodes, bool binaryToc)
+        IReadOnlyList<Models.DocumentNode> rootNodes, bool binaryToc,
+        List<TxtConfigParser.ConfigEntry>? additionalEntries = null)
     {
         var sb = new StringBuilder();
 
@@ -247,12 +268,19 @@ public class ChmProjectGenerator
             sb.AppendLine("    </object>");
         }
 
-        // 递归构建树
+        // 递归构建树（来自文档树的节点）
         sb.AppendLine("    <ul>");
         foreach (var node in rootNodes)
         {
             BuildHhcNode(sb, node, 2);
         }
+
+        // 如果有额外的配置文件，构建基于父子关系的树
+        if (additionalEntries != null && additionalEntries.Count > 0)
+        {
+            BuildHhcFromTxtConfig(sb, additionalEntries, 2);
+        }
+
         sb.AppendLine("    </ul>");
 
         if (!string.IsNullOrEmpty(defaultTopic))
@@ -265,6 +293,68 @@ public class ChmProjectGenerator
         sb.AppendLine("</html>");
 
         File.WriteAllBytes(hhcPath, Encoding.GetEncoding("GB2312").GetBytes(sb.ToString()));
+    }
+
+    /// <summary>
+    /// 从 txt 配置构建 HHC 树节点
+    /// </summary>
+    private void BuildHhcFromTxtConfig(StringBuilder sb, List<TxtConfigParser.ConfigEntry> entries, int level)
+    {
+        // 构建父子关系映射
+        var childrenMap = new Dictionary<string, List<TxtConfigParser.ConfigEntry>>();
+
+        foreach (var entry in entries)
+        {
+            var parentKey = string.IsNullOrEmpty(entry.ParentPath) ? "" : entry.ParentPath;
+            if (!childrenMap.ContainsKey(parentKey))
+            {
+                childrenMap[parentKey] = new List<TxtConfigParser.ConfigEntry>();
+            }
+            childrenMap[parentKey].Add(entry);
+        }
+
+        // 从根节点开始递归构建
+        BuildHhcTreeNodes(sb, childrenMap, "", level);
+    }
+
+    /// <summary>
+    /// 递归构建 HHC 树节点
+    /// </summary>
+    private void BuildHhcTreeNodes(StringBuilder sb, Dictionary<string, List<TxtConfigParser.ConfigEntry>> childrenMap,
+        string parentPath, int level)
+    {
+        string indent = new string(' ', level * 4);
+
+        if (!childrenMap.ContainsKey(parentPath))
+            return;
+
+        foreach (var entry in childrenMap[parentPath])
+        {
+            // 检查当前节点是否有子节点
+            bool hasChildren = childrenMap.ContainsKey(entry.RelativePath);
+
+            if (hasChildren)
+            {
+                // 有子节点的项，作为可展开的目录节点
+                sb.AppendLine($"{indent}<li><object type=\"text/sitemap\">");
+                sb.AppendLine($"{indent}    <param name=\"Name\" value=\"{EscapeXml(entry.Title)}\">");
+                sb.AppendLine($"{indent}    <param name=\"Local\" value=\"{SafeHhcRelativePath(entry.RelativePath)}\">");
+                sb.AppendLine($"{indent}</object>");
+                sb.AppendLine($"{indent}<ul>");
+                BuildHhcTreeNodes(sb, childrenMap, entry.RelativePath, level + 1);
+                sb.AppendLine($"{indent}</ul>");
+                sb.AppendLine($"{indent}</li>");
+            }
+            else
+            {
+                // 没有子节点的项，作为普通节点
+                sb.AppendLine($"{indent}<li><object type=\"text/sitemap\">");
+                sb.AppendLine($"{indent}    <param name=\"Name\" value=\"{EscapeXml(entry.Title)}\">");
+                sb.AppendLine($"{indent}    <param name=\"Local\" value=\"{SafeHhcRelativePath(entry.RelativePath)}\">");
+                sb.AppendLine($"{indent}</object>");
+                sb.AppendLine($"{indent}</li>");
+            }
+        }
     }
 
     private void BuildHhcNode(StringBuilder sb, Models.DocumentNode node, int level)
@@ -296,7 +386,8 @@ public class ChmProjectGenerator
         }
     }
 
-    private void GenerateHhk(string hhkPath, string srcDir, List<Models.DocumentNode> allFiles)
+    private void GenerateHhk(string hhkPath, string srcDir, List<Models.DocumentNode> allFiles,
+        List<TxtConfigParser.ConfigEntry>? additionalEntries = null)
     {
         var sb = new StringBuilder();
 
@@ -309,11 +400,30 @@ public class ChmProjectGenerator
         sb.AppendLine("<body>");
         sb.AppendLine("<ul>");
 
-        foreach (var file in allFiles.OrderBy(f => f.Title, StringComparer.OrdinalIgnoreCase))
+        // 收集所有条目并按标题排序
+        var allEntries = new List<(string Title, string Path)>();
+
+        // 添加文档树中的文件
+        foreach (var file in allFiles)
+        {
+            allEntries.Add((file.Title, file.RelativePath));
+        }
+
+        // 添加 txt 配置中的文件
+        if (additionalEntries != null)
+        {
+            foreach (var entry in additionalEntries)
+            {
+                allEntries.Add((entry.Title, entry.RelativePath));
+            }
+        }
+
+        // 按标题排序
+        foreach (var entry in allEntries.OrderBy(e => e.Title, StringComparer.OrdinalIgnoreCase))
         {
             sb.AppendLine($"<li><object type=\"text/sitemap\">");
-            sb.AppendLine($"  <param name=\"Name\" value=\"{EscapeXml(file.Title)}\">");
-            sb.AppendLine($"  <param name=\"Local\" value=\"{SafeHhcRelativePath(file.RelativePath)}\">");
+            sb.AppendLine($"  <param name=\"Name\" value=\"{EscapeXml(entry.Title)}\">");
+            sb.AppendLine($"  <param name=\"Local\" value=\"{SafeHhcRelativePath(entry.Path)}\">");
             sb.AppendLine($"</object></li>");
         }
 

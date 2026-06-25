@@ -4,10 +4,11 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="工具配置" Height="350" Width="600"
+        Title="工具配置" Height="400" Width="650"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource PanelBrush}"
-        ResizeMode="NoResize">
+        ResizeMode="CanResize"
+        ShowInTaskbar="False">
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>

@@ -8,9 +8,13 @@ namespace CHMGenerator.WPF.Tests;
 /// <summary>
 /// 外部工具集成测试脚本
 /// 用于验证 Python doc2html 是否正常工作
+/// 使用方法：注释掉其他测试类的 Main 方法，然后运行此类
 /// </summary>
 public class ExternalToolsTest
 {
+    // 注释掉 Main 方法，避免多个入口点冲突
+    // 如果要运行此测试，取消注释并注释掉其他测试类的 Main 方法
+    /*
     public static async Task Main(string[] args)
     {
         Console.WriteLine("=== CHM Generator WPF - 外部工具集成测试 ===\n");
@@ -24,6 +28,20 @@ public class ExternalToolsTest
         Console.WriteLine("\n=== 测试完成 ===");
         Console.WriteLine("按任意键退出...");
         Console.ReadKey();
+    }
+    */
+
+    public static async Task RunTests()
+    {
+        Console.WriteLine("=== CHM Generator WPF - 外部工具集成测试 ===\n");
+
+        // 测试配置管理
+        TestConfiguration();
+
+        // 测试 Python doc2html（如果启用）
+        await TestPythonDoc2Html();
+
+        Console.WriteLine("\n=== 测试完成 ===");
     }
 
     private static void TestConfiguration()
@@ -75,23 +93,36 @@ public class ExternalToolsTest
             Directory.CreateDirectory(outputDir);
 
             var progress = new Progress<string>(msg => Console.WriteLine($"  {msg}"));
+            var title = Path.GetFileNameWithoutExtension(testDocxPath);
 
             Console.WriteLine("开始转换...");
-            var htmlPath = await ExternalToolsIntegration.ConvertWordToPythonHtml(
+            var result = await ExternalToolsIntegration.ConvertWordToPythonHtml(
                 config.PythonToolsPath,
                 testDocxPath,
                 outputDir,
+                title,
                 progress);
 
-            if (!string.IsNullOrEmpty(htmlPath) && File.Exists(htmlPath))
+            if (result.Success && !string.IsNullOrEmpty(result.HtmlDirectory))
             {
                 Console.WriteLine($"✓ Python 转换测试通过");
-                Console.WriteLine($"  输出: {htmlPath}");
-                Console.WriteLine($"  大小: {new FileInfo(htmlPath).Length} bytes");
+                Console.WriteLine($"  HTML 目录: {result.HtmlDirectory}");
+                Console.WriteLine($"  配置文件: {result.TxtConfigFile}");
+
+                // 统计生成的文件
+                var htmlFiles = Directory.GetFiles(result.HtmlDirectory, "*.html", SearchOption.AllDirectories);
+                Console.WriteLine($"  生成 HTML 文件数: {htmlFiles.Length}");
+
+                if (htmlFiles.Length > 0)
+                {
+                    Console.WriteLine($"  主文件: {htmlFiles[0]}");
+                    Console.WriteLine($"  大小: {new FileInfo(htmlFiles[0]).Length} bytes");
+                }
             }
             else
             {
-                Console.WriteLine($"✗ Python 转换测试失败: 未生成 HTML 文件");
+                Console.WriteLine($"✗ Python 转换测试失败");
+                Console.WriteLine($"  错误: {result.ErrorMessage}");
             }
 
             // 清理临时目录
