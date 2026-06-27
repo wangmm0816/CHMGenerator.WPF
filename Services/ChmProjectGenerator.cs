@@ -91,11 +91,11 @@ public class ChmProjectGenerator
     /// <param name="fullTextSearch">是否启用全文搜索</param>
     /// <param name="binaryToc">是否使用二进制 TOC</param>
     /// <param name="autoIndex">是否自动索引</param>
-    /// <param name="additionalTxtConfigs">额外的 txt 配置文件路径列表（来自 Python doc2html）</param>
+    /// <param name="wordNodeTxtMap">Word 节点到其 Python txt 配置文件的映射</param>
     public GeneratedProject Generate(string outputDir, string srcDir, string title,
         string defaultTopic, IReadOnlyList<Models.DocumentNode> rootNodes,
         bool fullTextSearch = true, bool binaryToc = true, bool autoIndex = true,
-        List<string>? additionalTxtConfigs = null)
+        Dictionary<Models.DocumentNode, string>? wordNodeTxtMap = null)
     {
         // 把所有文件复制到 src/ 下，按 RelativePath 摆放
         CopyFilesToSrc(srcDir, rootNodes);
@@ -107,16 +107,9 @@ public class ChmProjectGenerator
         // 收集所有文件节点
         var allFiles = rootNodes.SelectMany(r => r.GetAllFileNodes()).ToList();
 
-        // 如果有额外的 txt 配置文件，解析并合并
-        List<TxtConfigParser.ConfigEntry>? additionalEntries = null;
-        if (additionalTxtConfigs != null && additionalTxtConfigs.Count > 0)
-        {
-            additionalEntries = TxtConfigParser.ParseMultiple(additionalTxtConfigs.ToArray());
-        }
-
-        GenerateHhp(hhpPath, srcDir, title, defaultTopic, allFiles, fullTextSearch, binaryToc, autoIndex, additionalEntries);
-        GenerateHhc(hhcPath, srcDir, title, defaultTopic, rootNodes, binaryToc, additionalEntries);
-        GenerateHhk(hhkPath, srcDir, allFiles, additionalEntries);
+        GenerateHhp(hhpPath, srcDir, title, defaultTopic, allFiles, fullTextSearch, binaryToc, autoIndex, wordNodeTxtMap);
+        GenerateHhc(hhcPath, srcDir, title, defaultTopic, rootNodes, binaryToc, wordNodeTxtMap);
+        GenerateHhk(hhkPath, srcDir, allFiles, wordNodeTxtMap);
 
         return new GeneratedProject
         {
@@ -168,39 +161,164 @@ public class ChmProjectGenerator
                 throw new Exception($"复制文件失败: {Path.GetFileName(sourcePath)} - {ex.Message}", ex);
             }
 
-            // 复制关联的图片目录（Word 转换产生的）
+            // 复制关联的文件（Word 转换产生的）
             if (node.NodeType == Models.NodeType.Word && !string.IsNullOrEmpty(node.ConvertedHtmlPath))
             {
-                var imageDir = Path.Combine(
-                    Path.GetDirectoryName(node.ConvertedHtmlPath) ?? "",
-                    Path.GetFileNameWithoutExtension(node.ConvertedHtmlPath) + "_images");
-
-                if (Directory.Exists(imageDir))
+                var sourceFileDir = Path.GetDirectoryName(node.ConvertedHtmlPath);
+                if (!string.IsNullOrEmpty(sourceFileDir))
                 {
-                    var destImageDir = Path.Combine(destDir ?? srcDir,
-                        Path.GetFileNameWithoutExtension(destPath) + "_images");
-                    if (!Directory.Exists(destImageDir)) Directory.CreateDirectory(destImageDir);
+                    // 检查是否是 Python 生成的（在 html 目录下）
+                    var outputDir = Path.GetDirectoryName(srcDir); // src 的父目录
+                    var htmlDir = Path.Combine(outputDir ?? "", "html");
 
-                    try
+                    if (sourceFileDir.StartsWith(htmlDir, StringComparison.OrdinalIgnoreCase))
                     {
-                        foreach (var img in Directory.GetFiles(imageDir))
+                        // Python 生成的文件，复制整个目录结构
+                        // 找到文档的根目录（如 html/产品说明书/）
+                        var relativePathFromHtml = sourceFileDir.Substring(htmlDir.Length).TrimStart(Path.DirectorySeparatorChar, '/');
+                        var firstSep = relativePathFromHtml.IndexOfAny(new[] { Path.DirectorySeparatorChar, '/' });
+                        string docRootName;
+                        if (firstSep > 0)
                         {
-                            File.Copy(img, Path.Combine(destImageDir, Path.GetFileName(img)), overwrite: true);
+                            docRootName = relativePathFromHtml.Substring(0, firstSep);
                         }
-                        System.Diagnostics.Debug.WriteLine($"复制图片目录: {imageDir} → {destImageDir}");
+                        else
+                        {
+                            docRootName = relativePathFromHtml;
+                        }
+
+                        var docRootDir = Path.Combine(htmlDir, docRootName);
+                        if (Directory.Exists(docRootDir))
+                        {
+                            // 目标目录：src/{节点的目录}/{文档根名}
+                            var nodeDir = Path.GetDirectoryName(destPath);
+                            var destDocRoot = Path.Combine(nodeDir ?? srcDir, docRootName);
+
+                            // 递归复制整个文档目录
+                            CopyDirectory(docRootDir, destDocRoot);
+                            System.Diagnostics.Debug.WriteLine($"复制 Python 文档目录: {docRootDir} → {destDocRoot}");
+                        }
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        System.Diagnostics.Debug.WriteLine($"复制图片失败: {imageDir} - {ex.Message}");
+                        // 内置转换器生成的图片目录
+                        var imageDir = Path.Combine(sourceFileDir, Path.GetFileNameWithoutExtension(node.ConvertedHtmlPath) + "_images");
+
+                        if (Directory.Exists(imageDir))
+                        {
+                            var destImageDir = Path.Combine(destDir ?? srcDir,
+                                Path.GetFileNameWithoutExtension(destPath) + "_images");
+                            if (!Directory.Exists(destImageDir)) Directory.CreateDirectory(destImageDir);
+
+                            try
+                            {
+                                foreach (var img in Directory.GetFiles(imageDir))
+                                {
+                                    File.Copy(img, Path.Combine(destImageDir, Path.GetFileName(img)), overwrite: true);
+                                }
+                                System.Diagnostics.Debug.WriteLine($"复制图片目录: {imageDir} → {destImageDir}");
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"复制图片失败: {imageDir} - {ex.Message}");
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
+    /// <summary>
+    /// 复制 txt 配置文件中列出的 HTML 文件到 src 目录
+    /// </summary>
+    private void CopyTxtConfigFilesToSrc(string srcDir, string outputDir, List<TxtConfigParser.ConfigEntry> entries)
+    {
+        if (entries == null || entries.Count == 0) return;
+
+        var htmlDir = Path.Combine(outputDir, "html");
+        if (!Directory.Exists(htmlDir))
+        {
+            System.Diagnostics.Debug.WriteLine($"警告: html 目录不存在: {htmlDir}");
+            return;
+        }
+
+        foreach (var entry in entries)
+        {
+            // entry.RelativePath 格式如: "src/产品说明书/chapter_1/chapter_1.html"
+            // 我们需要找到对应的源文件（在 html 目录下）
+            // 源文件路径: html/产品说明书/chapter_1/chapter_1.html
+
+            // 提取相对于 src 的路径部分（去掉 "src/" 前缀）
+            var relPath = entry.RelativePath;
+            if (relPath.StartsWith("src/", StringComparison.OrdinalIgnoreCase))
+            {
+                relPath = relPath.Substring(4);
+            }
+
+            // 目标路径: src/{relPath}
+            var destPath = Path.Combine(srcDir, relPath.Replace('/', Path.DirectorySeparatorChar));
+            var destDir = Path.GetDirectoryName(destPath);
+            if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
+
+            // 源文件路径: html/{去掉文档名前缀的路径}
+            // 例如: src/产品说明书/chapter_1/chapter_1.html -> html/产品说明书/chapter_1/chapter_1.html
+            var sourcePath = Path.Combine(htmlDir, relPath.Replace('/', Path.DirectorySeparatorChar));
+
+            if (File.Exists(sourcePath))
+            {
+                try
+                {
+                    File.Copy(sourcePath, destPath, overwrite: true);
+                    System.Diagnostics.Debug.WriteLine($"复制 txt 配置文件: {sourcePath} → {destPath}");
+
+                    // 同时复制该 HTML 文件的 images 子目录（如果存在）
+                    var sourceDir = Path.GetDirectoryName(sourcePath);
+                    if (!string.IsNullOrEmpty(sourceDir))
+                    {
+                        var sourceImagesDir = Path.Combine(sourceDir, "images");
+                        if (Directory.Exists(sourceImagesDir))
+                        {
+                            var destImagesDir = Path.Combine(destDir ?? srcDir, "images");
+                            CopyDirectory(sourceImagesDir, destImagesDir);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"复制文件失败: {sourcePath} - {ex.Message}");
+                }
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"警告: 源文件不存在: {sourcePath}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 递归复制目录
+    /// </summary>
+    private static void CopyDirectory(string sourceDir, string destDir)
+    {
+        Directory.CreateDirectory(destDir);
+
+        foreach (var file in Directory.GetFiles(sourceDir))
+        {
+            var destFile = Path.Combine(destDir, Path.GetFileName(file));
+            File.Copy(file, destFile, overwrite: true);
+        }
+
+        foreach (var dir in Directory.GetDirectories(sourceDir))
+        {
+            var destSubDir = Path.Combine(destDir, Path.GetFileName(dir));
+            CopyDirectory(dir, destSubDir);
+        }
+    }
+
     private void GenerateHhp(string hhpPath, string srcDir, string title, string defaultTopic,
         List<Models.DocumentNode> allFiles, bool fullTextSearch, bool binaryToc, bool autoIndex,
-        List<TxtConfigParser.ConfigEntry>? additionalEntries = null)
+        Dictionary<Models.DocumentNode, string>? wordNodeTxtMap = null)
     {
         var sb = new StringBuilder();
 
@@ -229,12 +347,25 @@ public class ChmProjectGenerator
             sb.AppendLine(SafeHhcRelativePath(file.RelativePath));
         }
 
-        // 添加来自 txt 配置的文件
-        if (additionalEntries != null)
+        // 添加来自 Word 节点的 Python txt 配置的文件
+        if (wordNodeTxtMap != null)
         {
-            foreach (var entry in additionalEntries)
+            foreach (var kvp in wordNodeTxtMap)
             {
-                sb.AppendLine(SafeHhcRelativePath(entry.RelativePath));
+                var wordNode = kvp.Key;
+                var txtFile = kvp.Value;
+                if (File.Exists(txtFile))
+                {
+                    var entries = TxtConfigParser.Parse(txtFile);
+                    var nodePathPrefix = GetNodePathPrefix(wordNode);
+                    foreach (var entry in entries)
+                    {
+                        var fullPath = string.IsNullOrEmpty(nodePathPrefix)
+                            ? entry.RelativePath
+                            : $"{nodePathPrefix}/{entry.RelativePath}";
+                        sb.AppendLine(SafeHhcRelativePath(fullPath));
+                    }
+                }
             }
         }
 
@@ -243,8 +374,21 @@ public class ChmProjectGenerator
 
     private void GenerateHhc(string hhcPath, string srcDir, string title, string defaultTopic,
         IReadOnlyList<Models.DocumentNode> rootNodes, bool binaryToc,
-        List<TxtConfigParser.ConfigEntry>? additionalEntries = null)
+        Dictionary<Models.DocumentNode, string>? wordNodeTxtMap = null)
     {
+        // 调试：输出节点结构
+        System.Diagnostics.Debug.WriteLine("=== GenerateHhc 节点结构 ===");
+        System.Diagnostics.Debug.WriteLine($"Title: {title}");
+        System.Diagnostics.Debug.WriteLine($"DefaultTopic: {defaultTopic}");
+        System.Diagnostics.Debug.WriteLine($"RootNodes 数量: {rootNodes.Count}");
+        for (int i = 0; i < rootNodes.Count; i++)
+        {
+            var node = rootNodes[i];
+            System.Diagnostics.Debug.WriteLine($"RootNodes[{i}]:");
+            PrintNodeTree(node, 1);
+        }
+        System.Diagnostics.Debug.WriteLine("=========================");
+
         var sb = new StringBuilder();
 
         sb.AppendLine("<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML//EN\">");
@@ -272,15 +416,8 @@ public class ChmProjectGenerator
         sb.AppendLine("    <ul>");
         foreach (var node in rootNodes)
         {
-            BuildHhcNode(sb, node, 2);
+            BuildHhcNode(sb, node, 2, wordNodeTxtMap);
         }
-
-        // 如果有额外的配置文件，构建基于父子关系的树
-        if (additionalEntries != null && additionalEntries.Count > 0)
-        {
-            BuildHhcFromTxtConfig(sb, additionalEntries, 2);
-        }
-
         sb.AppendLine("    </ul>");
 
         if (!string.IsNullOrEmpty(defaultTopic))
@@ -293,6 +430,19 @@ public class ChmProjectGenerator
         sb.AppendLine("</html>");
 
         File.WriteAllBytes(hhcPath, Encoding.GetEncoding("GB2312").GetBytes(sb.ToString()));
+    }
+
+    /// <summary>
+    /// 调试：打印节点树结构
+    /// </summary>
+    private void PrintNodeTree(Models.DocumentNode node, int depth)
+    {
+        string indent = new string(' ', depth * 2);
+        System.Diagnostics.Debug.WriteLine($"{indent}└─ {node.Title} (IsFolder={node.IsFolder})");
+        foreach (var child in node.Children)
+        {
+            PrintNodeTree(child, depth + 1);
+        }
     }
 
     /// <summary>
@@ -318,8 +468,67 @@ public class ChmProjectGenerator
     }
 
     /// <summary>
-    /// 递归构建 HHC 树节点
+    /// 递归构建 HHC 树节点，带路径前缀
     /// </summary>
+    private void BuildHhcTreeNodesWithPrefix(StringBuilder sb, Dictionary<string, List<TxtConfigParser.ConfigEntry>> childrenMap,
+        string parentPath, int level, string pathPrefix)
+    {
+        string indent = new string(' ', level * 4);
+
+        if (!childrenMap.ContainsKey(parentPath))
+            return;
+
+        foreach (var entry in childrenMap[parentPath])
+        {
+            // 添加路径前缀
+            var fullPath = string.IsNullOrEmpty(pathPrefix)
+                ? entry.RelativePath
+                : $"{pathPrefix}/{entry.RelativePath}";
+
+            // 检查当前节点是否有子节点
+            bool hasChildren = childrenMap.ContainsKey(entry.RelativePath);
+
+            if (hasChildren)
+            {
+                // 有子节点的项，作为可展开的目录节点
+                sb.AppendLine($"{indent}<li><object type=\"text/sitemap\">");
+                sb.AppendLine($"{indent}    <param name=\"Name\" value=\"{EscapeXml(entry.Title)}\">");
+                sb.AppendLine($"{indent}    <param name=\"Local\" value=\"{SafeHhcRelativePath(fullPath)}\">");
+                sb.AppendLine($"{indent}</object>");
+                sb.AppendLine($"{indent}<ul>");
+                BuildHhcTreeNodesWithPrefix(sb, childrenMap, entry.RelativePath, level + 1, pathPrefix);
+                sb.AppendLine($"{indent}</ul>");
+                sb.AppendLine($"{indent}</li>");
+            }
+            else
+            {
+                // 没有子节点的项，作为普通节点
+                sb.AppendLine($"{indent}<li><object type=\"text/sitemap\">");
+                sb.AppendLine($"{indent}    <param name=\"Name\" value=\"{EscapeXml(entry.Title)}\">");
+                sb.AppendLine($"{indent}    <param name=\"Local\" value=\"{SafeHhcRelativePath(fullPath)}\">");
+                sb.AppendLine($"{indent}</object>");
+                sb.AppendLine($"{indent}</li>");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 获取节点的路径前缀（父路径）
+    /// </summary>
+    private string GetNodePathPrefix(Models.DocumentNode node)
+    {
+        var parts = new List<string>();
+        var current = node.Parent;
+        while (current != null)
+        {
+            if (!string.IsNullOrEmpty(current.Title))
+            {
+                parts.Insert(0, SanitizeFileName(current.Title));
+            }
+            current = current.Parent;
+        }
+        return string.Join("/", parts);
+    }
     private void BuildHhcTreeNodes(StringBuilder sb, Dictionary<string, List<TxtConfigParser.ConfigEntry>> childrenMap,
         string parentPath, int level)
     {
@@ -357,9 +566,12 @@ public class ChmProjectGenerator
         }
     }
 
-    private void BuildHhcNode(StringBuilder sb, Models.DocumentNode node, int level)
+    private void BuildHhcNode(StringBuilder sb, Models.DocumentNode node, int level,
+        Dictionary<Models.DocumentNode, string>? wordNodeTxtMap = null)
     {
         string indent = new string(' ', level * 4);
+
+        System.Diagnostics.Debug.WriteLine($"BuildHhcNode: level={level}, Title={node.Title}, IsFolder={node.IsFolder}, Children={node.Children.Count}");
 
         if (node.IsFolder)
         {
@@ -370,24 +582,64 @@ public class ChmProjectGenerator
             sb.AppendLine($"{indent}<ul>");
             foreach (var child in node.Children)
             {
-                BuildHhcNode(sb, child, level + 1);
+                BuildHhcNode(sb, child, level + 1, wordNodeTxtMap);
             }
             sb.AppendLine($"{indent}</ul>");
             sb.AppendLine($"{indent}</li>");
         }
+        else if (node.NodeType == Models.NodeType.Word && wordNodeTxtMap != null && wordNodeTxtMap.ContainsKey(node))
+        {
+            // Word 节点：展开 Python txt 配置的层级
+            var txtFile = wordNodeTxtMap[node];
+            if (File.Exists(txtFile))
+            {
+                var entries = TxtConfigParser.Parse(txtFile);
+                var nodePathPrefix = GetNodePathPrefix(node);
+
+                System.Diagnostics.Debug.WriteLine($"  → Word 节点，展开 txt: {txtFile}, 前缀: {nodePathPrefix}");
+
+                // 构建父子关系映射
+                var childrenMap = new Dictionary<string, List<TxtConfigParser.ConfigEntry>>();
+                foreach (var entry in entries)
+                {
+                    var parentKey = string.IsNullOrEmpty(entry.ParentPath) ? "" : entry.ParentPath;
+                    if (!childrenMap.ContainsKey(parentKey))
+                    {
+                        childrenMap[parentKey] = new List<TxtConfigParser.ConfigEntry>();
+                    }
+                    childrenMap[parentKey].Add(entry);
+                }
+
+                // 从根节点开始递归构建，添加路径前缀
+                BuildHhcTreeNodesWithPrefix(sb, childrenMap, "", level, nodePathPrefix);
+            }
+            else
+            {
+                // txt 文件不存在，作为普通文件节点
+                sb.AppendLine($"{indent}<li><object type=\"text/sitemap\">");
+                sb.AppendLine($"{indent}    <param name=\"Name\" value=\"{EscapeXml(node.Title)}\">");
+                sb.AppendLine($"{indent}    <param name=\"Local\" value=\"{SafeHhcRelativePath(node.RelativePath)}\">");
+                sb.AppendLine($"{indent}</object>");
+                sb.AppendLine($"{indent}</li>");
+
+                System.Diagnostics.Debug.WriteLine($"  → Word 文件节点(无txt): RelativePath={node.RelativePath}");
+            }
+        }
         else
         {
-            // 文件节点
+            // 普通文件节点
             sb.AppendLine($"{indent}<li><object type=\"text/sitemap\">");
             sb.AppendLine($"{indent}    <param name=\"Name\" value=\"{EscapeXml(node.Title)}\">");
             sb.AppendLine($"{indent}    <param name=\"Local\" value=\"{SafeHhcRelativePath(node.RelativePath)}\">");
             sb.AppendLine($"{indent}</object>");
             sb.AppendLine($"{indent}</li>");
+
+            System.Diagnostics.Debug.WriteLine($"  → 文件节点: RelativePath={node.RelativePath}");
         }
     }
 
     private void GenerateHhk(string hhkPath, string srcDir, List<Models.DocumentNode> allFiles,
-        List<TxtConfigParser.ConfigEntry>? additionalEntries = null)
+        Dictionary<Models.DocumentNode, string>? wordNodeTxtMap = null)
     {
         var sb = new StringBuilder();
 
@@ -409,12 +661,25 @@ public class ChmProjectGenerator
             allEntries.Add((file.Title, file.RelativePath));
         }
 
-        // 添加 txt 配置中的文件
-        if (additionalEntries != null)
+        // 添加 Word 节点的 Python txt 配置中的文件
+        if (wordNodeTxtMap != null)
         {
-            foreach (var entry in additionalEntries)
+            foreach (var kvp in wordNodeTxtMap)
             {
-                allEntries.Add((entry.Title, entry.RelativePath));
+                var wordNode = kvp.Key;
+                var txtFile = kvp.Value;
+                if (File.Exists(txtFile))
+                {
+                    var entries = TxtConfigParser.Parse(txtFile);
+                    var nodePathPrefix = GetNodePathPrefix(wordNode);
+                    foreach (var entry in entries)
+                    {
+                        var fullPath = string.IsNullOrEmpty(nodePathPrefix)
+                            ? entry.RelativePath
+                            : $"{nodePathPrefix}/{entry.RelativePath}";
+                        allEntries.Add((entry.Title, fullPath));
+                    }
+                }
             }
         }
 

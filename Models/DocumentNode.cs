@@ -153,38 +153,79 @@ public class DocumentNode : INotifyPropertyChanged
         {
             var parts = new List<string>();
             var current = this;
-            while (current != null)
+
+            // 首先处理当前节点（最内层）
+            if (current != null && !string.IsNullOrEmpty(current.Title))
             {
-                if (!string.IsNullOrEmpty(current.Title))
+                if (current.IsFolder)
                 {
-                    // 文件夹用 Title，文件用 HTML 文件名
-                    if (current.IsFolder)
+                    parts.Add(SanitizeFileName(current.Title));
+                }
+                else if (current.NodeType == NodeType.Word)
+                {
+                    // Word 文件：需要包含 Python 生成的目录结构
+                    // ConvertedHtmlPath 格式：outputDir/html/产品说明书/chapter_1/chapter_1.html
+                    // 需要提取：产品说明书/chapter_1/chapter_1.html
+                    var htmlPath = current.EffectiveHtmlPath;
+                    if (!string.IsNullOrEmpty(htmlPath) && File.Exists(htmlPath))
                     {
-                        parts.Insert(0, SanitizeFileName(current.Title));
+                        // 找到 html 目录
+                        var dir = Path.GetDirectoryName(htmlPath);
+                        var pathSegments = new List<string>();
+                        pathSegments.Insert(0, Path.GetFileName(htmlPath));
+
+                        // 向上遍历，直到找到 "html" 目录
+                        while (!string.IsNullOrEmpty(dir))
+                        {
+                            var dirName = Path.GetFileName(dir);
+                            if (dirName.Equals("html", StringComparison.OrdinalIgnoreCase))
+                            {
+                                break;
+                            }
+                            pathSegments.Insert(0, dirName);
+                            dir = Path.GetDirectoryName(dir);
+                        }
+
+                        // pathSegments 现在包含：[产品说明书, chapter_1, chapter_1.html]
+                        parts.Add(string.Join("/", pathSegments));
                     }
                     else
                     {
-                        // 文件节点：如果有 EffectiveHtmlPath，使用其文件名；否则根据 Title 生成
-                        var htmlPath = current.EffectiveHtmlPath;
-                        if (!string.IsNullOrEmpty(htmlPath) && File.Exists(htmlPath))
-                        {
-                            parts.Insert(0, Path.GetFileName(htmlPath));
-                        }
-                        else
-                        {
-                            // 如果 HTML 路径还不存在（转换前），用 Title + .html
-                            var fileName = SanitizeFileName(current.Title);
-                            if (!fileName.EndsWith(".html", StringComparison.OrdinalIgnoreCase) &&
-                                !fileName.EndsWith(".htm", StringComparison.OrdinalIgnoreCase))
-                            {
-                                fileName += ".html";
-                            }
-                            parts.Insert(0, fileName);
-                        }
+                        parts.Add($"{SanitizeFileName(current.Title)}.html");
                     }
                 }
+                else
+                {
+                    // 普通 HTML 文件
+                    var htmlPath = current.EffectiveHtmlPath;
+                    if (!string.IsNullOrEmpty(htmlPath) && File.Exists(htmlPath))
+                    {
+                        parts.Add(Path.GetFileName(htmlPath));
+                    }
+                    else
+                    {
+                        var fileName = SanitizeFileName(current.Title);
+                        if (!fileName.EndsWith(".html", StringComparison.OrdinalIgnoreCase) &&
+                            !fileName.EndsWith(".htm", StringComparison.OrdinalIgnoreCase))
+                        {
+                            fileName += ".html";
+                        }
+                        parts.Add(fileName);
+                    }
+                }
+
+                // 向上遍历父节点（只添加文件夹）
                 current = current.Parent;
+                while (current != null)
+                {
+                    if (!string.IsNullOrEmpty(current.Title))
+                    {
+                        parts.Insert(0, SanitizeFileName(current.Title));
+                    }
+                    current = current.Parent;
+                }
             }
+
             return string.Join("/", parts);
         }
     }

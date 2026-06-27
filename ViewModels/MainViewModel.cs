@@ -690,9 +690,6 @@ public partial class MainViewModel : ObservableObject
         AppendLog($"  PythonToolsPath = {config.PythonToolsPath}");
         AppendLog($"  IsPythonAvailable = {config.IsPythonAvailable()}");
 
-        // 用于存储 Python 生成的 txt 配置文件
-        var pythonTxtConfigs = new List<string>();
-
         if (config.IsPythonAvailable())
         {
             AppendLog($"- 转换模式: 使用 Python doc2html");
@@ -709,6 +706,8 @@ public partial class MainViewModel : ObservableObject
                 .Where(n => n.NodeType == NodeType.Word)
                 .ToList();
 
+            Dictionary<DocumentNode, string>? wordNodeTxtMap = null;
+
             if (wordNodes.Count > 0)
             {
                 ProgressText = $"正在转换 Word 文件 (0/{wordNodes.Count})...";
@@ -717,7 +716,9 @@ public partial class MainViewModel : ObservableObject
                 // 根据配置选择转换方式
                 if (config.IsPythonAvailable())
                 {
-                    pythonTxtConfigs = await ConvertWordsUsingPythonWithConfig(wordNodes, htmlDir, config.PythonToolsPath);
+                    // Python 工具会在 outputDir 下自动创建 html 子目录
+                    // 返回 Word 节点到 txt 配置文件的映射
+                    wordNodeTxtMap = await ConvertWordsUsingPythonWithConfig(wordNodes, outputDir, config.PythonToolsPath);
                 }
                 else
                 {
@@ -767,6 +768,52 @@ public partial class MainViewModel : ObservableObject
             var defaultTopic = firstFile.RelativePath;
             AppendLog($"- 默认首页: {defaultTopic}");
 
+            // 2.5. 如果使用了 Python 转换，复制公共资源（css、scripts 等）到 src 目录
+            if (config.IsPythonAvailable() && wordNodes.Count > 0)
+            {
+                AppendLog("- 复制 Python 公共资源...");
+
+                // 复制 css 目录
+                var cssSrc = Path.Combine(htmlDir, "css");
+                if (Directory.Exists(cssSrc))
+                {
+                    var cssDest = Path.Combine(srcDir, "css");
+                    CopyDirectory(cssSrc, cssDest);
+                    AppendLog($"  ✓ css/");
+                }
+
+                // 复制 scripts 目录
+                var scriptsSrc = Path.Combine(htmlDir, "scripts");
+                if (Directory.Exists(scriptsSrc))
+                {
+                    var scriptsDest = Path.Combine(srcDir, "scripts");
+                    CopyDirectory(scriptsSrc, scriptsDest);
+                    AppendLog($"  ✓ scripts/");
+                }
+
+                // 复制 resource 目录（如果存在）
+                var resourceSrc = Path.Combine(htmlDir, "resource");
+                if (Directory.Exists(resourceSrc))
+                {
+                    var resourceDest = Path.Combine(srcDir, "resource");
+                    CopyDirectory(resourceSrc, resourceDest);
+                    AppendLog($"  ✓ resource/");
+                }
+
+                // 复制根目录下的公共文件（如 note.gif, tdc.js 等）
+                foreach (var file in Directory.GetFiles(htmlDir, "*.*", SearchOption.TopDirectoryOnly))
+                {
+                    var fileName = Path.GetFileName(file);
+                    // 跳过 txt 配置文件
+                    if (Path.GetExtension(file).Equals(".txt", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var destFile = Path.Combine(srcDir, fileName);
+                    File.Copy(file, destFile, overwrite: true);
+                    AppendLog($"  ✓ {fileName}");
+                }
+            }
+
             // 3. 生成工程文件
             ProgressText = "正在生成工程文件...";
             ProgressValue = 60;
@@ -774,7 +821,7 @@ public partial class MainViewModel : ObservableObject
 
             var project = _projectGenerator.Generate(
                 outputDir, srcDir, ProjectTitle, defaultTopic, RootNodes,
-                FullTextSearch, BinaryToc, AutoIndex, pythonTxtConfigs);
+                FullTextSearch, BinaryToc, AutoIndex, wordNodeTxtMap);
 
             AppendLog($"  ✓ project.hhp");
             AppendLog($"  ✓ toc.hhc");
@@ -832,13 +879,17 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 使用 Python doc2html 转换 Word 文件，并返回生成的 txt 配置文件列表
+    /// 使用 Python doc2html 转换 Word 文件，并返回 Word 节点到 txt 配置文件的映射
     /// </summary>
-    private async Task<List<string>> ConvertWordsUsingPythonWithConfig(List<DocumentNode> wordNodes, string tempDir, string pythonToolsPath)
+    private async Task<Dictionary<DocumentNode, string>> ConvertWordsUsingPythonWithConfig(List<DocumentNode> wordNodes, string outputDir, string pythonToolsPath)
     {
-        var txtConfigFiles = new List<string>();
+        var wordNodeTxtMap = new Dictionary<DocumentNode, string>();
         int done = 0;
         var progress = new Progress<string>(msg => AppendLog($"    {msg}"));
+
+        // 为内置转换器回退准备临时目录
+        var tempDir = Path.Combine(Path.GetTempPath(), $"CHMGen_Fallback_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
 
         foreach (var wordNode in wordNodes)
         {
@@ -848,14 +899,14 @@ public partial class MainViewModel : ObservableObject
                 var result = await ExternalToolsIntegration.ConvertWordToPythonHtml(
                     pythonToolsPath,
                     wordNode.SourcePath,
-                    tempDir,
+                    outputDir,  // 项目根目录，Python 会创建 html 子目录
                     title,
                     progress);
 
                 if (result.Success && !string.IsNullOrEmpty(result.HtmlDirectory))
                 {
-                    // Python 生成的 HTML 文件在 result.HtmlDirectory 下
-                    var htmlFiles = Directory.GetFiles(result.HtmlDirectory, "*.html", SearchOption.TopDirectoryOnly);
+                    // Python 生成的 HTML 文件在 result.HtmlDirectory 下（可能在子目录中）
+                    var htmlFiles = Directory.GetFiles(result.HtmlDirectory, "*.html", SearchOption.AllDirectories);
 
                     if (htmlFiles.Length > 0)
                     {
@@ -867,10 +918,10 @@ public partial class MainViewModel : ObservableObject
                         wordNode.ConvertedHtmlPath = mainHtmlFile;
                         AppendLog($"  ✓ {Path.GetFileName(wordNode.SourcePath)} → {Path.GetFileName(mainHtmlFile)}");
 
-                        // 记录 txt 配置文件
+                        // 记录 Word 节点到 txt 配置文件的映射
                         if (!string.IsNullOrEmpty(result.TxtConfigFile) && File.Exists(result.TxtConfigFile))
                         {
-                            txtConfigFiles.Add(result.TxtConfigFile);
+                            wordNodeTxtMap[wordNode] = result.TxtConfigFile;
                             AppendLog($"    配置文件: {result.TxtConfigFile}");
                         }
                     }
@@ -898,7 +949,10 @@ public partial class MainViewModel : ObservableObject
             await Task.Yield();
         }
 
-        return txtConfigFiles;
+        // 清理临时目录
+        try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
+
+        return wordNodeTxtMap;
     }
 
     [RelayCommand]
@@ -1024,10 +1078,14 @@ public partial class MainViewModel : ObservableObject
     /// <summary>
     /// 使用 Python doc2html 转换 Word 文件
     /// </summary>
-    private async Task ConvertWordsUsingPython(List<DocumentNode> wordNodes, string tempDir, string pythonToolsPath)
+    private async Task ConvertWordsUsingPython(List<DocumentNode> wordNodes, string outputDir, string pythonToolsPath)
     {
         int done = 0;
         var progress = new Progress<string>(msg => AppendLog($"    {msg}"));
+
+        // 为内置转换器回退准备临时目录
+        var tempDir = Path.Combine(Path.GetTempPath(), $"CHMGen_Fallback_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
 
         foreach (var wordNode in wordNodes)
         {
@@ -1037,15 +1095,15 @@ public partial class MainViewModel : ObservableObject
                 var result = await ExternalToolsIntegration.ConvertWordToPythonHtml(
                     pythonToolsPath,
                     wordNode.SourcePath,
-                    tempDir,
+                    outputDir,  // 项目根目录，Python 会创建 html 子目录
                     title,
                     progress);
 
                 if (result.Success && !string.IsNullOrEmpty(result.HtmlDirectory))
                 {
-                    // Python 生成的 HTML 文件在 result.HtmlDirectory 下
+                    // Python 生成的 HTML 文件在 result.HtmlDirectory 下（可能在子目录中）
                     // 查找主 HTML 文件（通常是第一个文件或与输出目录同名的文件）
-                    var htmlFiles = Directory.GetFiles(result.HtmlDirectory, "*.html", SearchOption.TopDirectoryOnly);
+                    var htmlFiles = Directory.GetFiles(result.HtmlDirectory, "*.html", SearchOption.AllDirectories);
 
                     if (htmlFiles.Length > 0)
                     {
@@ -1089,6 +1147,9 @@ public partial class MainViewModel : ObservableObject
             ProgressText = $"正在转换 Word 文件 ({done}/{wordNodes.Count})...";
             await Task.Yield();
         }
+
+        // 清理临时目录
+        try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
     }
 
     /// <summary>
@@ -1137,6 +1198,28 @@ public partial class MainViewModel : ObservableObject
             ProgressValue = done * 50.0 / wordNodes.Count;
             ProgressText = $"正在转换 Word 文件 ({done}/{wordNodes.Count})...";
             await Task.Yield();
+        }
+    }
+
+    /// <summary>
+    /// 递归复制目录
+    /// </summary>
+    private static void CopyDirectory(string sourceDir, string destDir)
+    {
+        Directory.CreateDirectory(destDir);
+
+        // 复制所有文件
+        foreach (var file in Directory.GetFiles(sourceDir))
+        {
+            var destFile = Path.Combine(destDir, Path.GetFileName(file));
+            File.Copy(file, destFile, overwrite: true);
+        }
+
+        // 递归复制所有子目录
+        foreach (var dir in Directory.GetDirectories(sourceDir))
+        {
+            var destSubDir = Path.Combine(destDir, Path.GetFileName(dir));
+            CopyDirectory(dir, destSubDir);
         }
     }
 }

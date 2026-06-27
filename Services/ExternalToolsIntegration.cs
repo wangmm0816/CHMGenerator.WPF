@@ -101,12 +101,25 @@ public class ExternalToolsIntegration
 
             if (process.ExitCode == 0)
             {
-                // Python 输出结构：
-                // outputDir/html/{outputSubDirName}/ - HTML文件
-                // outputDir/html/{outputSubDirName}.txt - 配置文件
-                var htmlBaseDir = Path.Combine(outputDir, "html");
-                var htmlDir = Path.Combine(htmlBaseDir, outputSubDirName);
-                var txtFile = Path.Combine(htmlBaseDir, $"{outputSubDirName}.txt");
+                // Python 工具会在 outputDir 下创建 html 子目录
+                // 我们传入的 outputDir 已经是项目的 html 目录了
+                // 所以实际路径可能是：outputDir/html/{outputSubDirName}/ (多了一层)
+                // 我们希望是：outputDir/{outputSubDirName}/
+
+                // 先尝试直接在 outputDir 下查找
+                var htmlDir = Path.Combine(outputDir, outputSubDirName);
+                var txtFile = Path.Combine(outputDir, $"{outputSubDirName}.txt");
+
+                // 如果不存在，检查是否 Python 创建了额外的 html 层级
+                if (!Directory.Exists(htmlDir))
+                {
+                    var htmlSubDir = Path.Combine(outputDir, "html");
+                    if (Directory.Exists(htmlSubDir))
+                    {
+                        htmlDir = Path.Combine(htmlSubDir, outputSubDirName);
+                        txtFile = Path.Combine(htmlSubDir, $"{outputSubDirName}.txt");
+                    }
+                }
 
                 if (Directory.Exists(htmlDir))
                 {
