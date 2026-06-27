@@ -228,6 +228,9 @@ public class ExternalToolsIntegration
     {
         try
         {
+            System.Diagnostics.Debug.WriteLine($"[CopySharedResources] pythonToolsPath={pythonToolsPath}");
+            System.Diagnostics.Debug.WriteLine($"[CopySharedResources] targetDir={targetDir}");
+
             // Python 工具的共享资源可能在以下位置：
             // 1. pythonToolsPath/resource/
             // 2. pythonToolsPath/resources/
@@ -249,9 +252,11 @@ public class ExternalToolsIntegration
                 foreach (var searchPath in searchPaths)
                 {
                     var sourceDir = Path.Combine(searchPath, sharedDirName);
+                    System.Diagnostics.Debug.WriteLine($"[CopySharedResources] 检查: {sourceDir}");
                     if (Directory.Exists(sourceDir))
                     {
                         var destDir = Path.Combine(targetDir, sharedDirName);
+                        System.Diagnostics.Debug.WriteLine($"[CopySharedResources] 复制: {sourceDir} → {destDir}");
                         CopyDirectory(sourceDir, destDir);
                         progress?.Report($"  复制共享资源: {sharedDirName} → {destDir}");
                         copied = true;

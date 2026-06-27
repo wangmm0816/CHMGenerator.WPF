@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 
@@ -5,21 +6,34 @@ namespace CHMGenerator.WPF.Services;
 
 /// <summary>
 /// 日志管理服务
-/// 自动将操作日志和编译日志保存到 logs 目录
+/// 自动将操作日志、编译日志和调试日志保存到 log 目录的不同子文件夹
 /// </summary>
 public class LogManager
 {
     private static LogManager? _instance;
-    private readonly string _logDirectory;
-    private string? _currentOperationLogPath;
+    private readonly string _logRootDirectory;
+    private readonly string _statusLogDirectory;
+    private readonly string _compileLogDirectory;
+    private readonly string _debugLogDirectory;
+    private string? _currentStatusLogPath;
     private string? _currentCompileLogPath;
+    private string? _currentDebugLogPath;
     private readonly object _lockObject = new();
 
     private LogManager()
     {
-        // 在项目目录下创建 logs 文件夹
-        _logDirectory = Path.Combine(AppContext.BaseDirectory, "logs");
-        Directory.CreateDirectory(_logDirectory);
+        // 在项目目录下创建 logs 文件夹及子文件夹（保持原有的 logs 目录名）
+        _logRootDirectory = Path.Combine(AppContext.BaseDirectory, "logs");
+        _statusLogDirectory = Path.Combine(_logRootDirectory, "Status");
+        _compileLogDirectory = Path.Combine(_logRootDirectory, "Compile");
+        _debugLogDirectory = Path.Combine(_logRootDirectory, "Debug");
+
+        Directory.CreateDirectory(_statusLogDirectory);
+        Directory.CreateDirectory(_compileLogDirectory);
+        Directory.CreateDirectory(_debugLogDirectory);
+
+        // 设置 Debug 输出重定向
+        Trace.Listeners.Add(new DebugTraceListener(this));
     }
 
     public static LogManager Instance => _instance ??= new LogManager();
@@ -30,35 +44,82 @@ public class LogManager
     public void StartNewSession()
     {
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        _currentOperationLogPath = Path.Combine(_logDirectory, $"operation_{timestamp}.txt");
-        _currentCompileLogPath = Path.Combine(_logDirectory, $"compile_{timestamp}.txt");
+        _currentStatusLogPath = Path.Combine(_statusLogDirectory, $"status_{timestamp}.txt");
+        _currentCompileLogPath = Path.Combine(_compileLogDirectory, $"compile_{timestamp}.txt");
+        _currentDebugLogPath = Path.Combine(_debugLogDirectory, $"debug_{timestamp}.txt");
 
         // 创建日志文件并写入头部信息
         var header = $"=== CHM Generator 日志 ===\n会话开始时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n\n";
 
         lock (_lockObject)
         {
-            File.WriteAllText(_currentOperationLogPath, header, Encoding.UTF8);
+            File.WriteAllText(_currentStatusLogPath, header, Encoding.UTF8);
             File.WriteAllText(_currentCompileLogPath, header, Encoding.UTF8);
+            File.WriteAllText(_currentDebugLogPath, header, Encoding.UTF8);
         }
 
-        WriteOperation($"日志文件已创建: {Path.GetFileName(_currentOperationLogPath)}");
+        WriteStatus($"日志文件已创建");
+        WriteDebug($"调试日志文件: {Path.GetFileName(_currentDebugLogPath)}");
     }
 
     /// <summary>
-    /// 写入操作日志
+    /// 写入状态日志（主页面左下角状态栏的内容）
     /// </summary>
-    public void WriteOperation(string message)
+    public void WriteStatus(string message)
     {
-        if (string.IsNullOrEmpty(_currentOperationLogPath)) StartNewSession();
+        if (string.IsNullOrEmpty(_currentStatusLogPath)) StartNewSession();
 
-        var logEntry = $"[{DateTime.Now:HH:mm:ss}] {message}\n";
+        var logEntry = $"[{DateTime.Now:HH:mm:ss}] [状态栏] {message}\n";
 
         lock (_lockObject)
         {
             try
             {
-                File.AppendAllText(_currentOperationLogPath!, logEntry, Encoding.UTF8);
+                File.AppendAllText(_currentStatusLogPath!, logEntry, Encoding.UTF8);
+            }
+            catch
+            {
+                // 写入失败，忽略
+            }
+        }
+    }
+
+    /// <summary>
+    /// 写入操作日志（用户操作记录，如添加文件、删除节点等）
+    /// </summary>
+    public void WriteOperation(string message)
+    {
+        if (string.IsNullOrEmpty(_currentStatusLogPath)) StartNewSession();
+
+        var logEntry = $"[{DateTime.Now:HH:mm:ss}] [操作] {message}\n";
+
+        lock (_lockObject)
+        {
+            try
+            {
+                File.AppendAllText(_currentStatusLogPath!, logEntry, Encoding.UTF8);
+            }
+            catch
+            {
+                // 写入失败，忽略
+            }
+        }
+    }
+
+    /// <summary>
+    /// 写入调试日志（System.Diagnostics.Debug.WriteLine 的内容）
+    /// </summary>
+    public void WriteDebug(string message)
+    {
+        if (string.IsNullOrEmpty(_currentDebugLogPath)) StartNewSession();
+
+        var logEntry = $"[{DateTime.Now:HH:mm:ss.fff}] {message}\n";
+
+        lock (_lockObject)
+        {
+            try
+            {
+                File.AppendAllText(_currentDebugLogPath!, logEntry, Encoding.UTF8);
             }
             catch
             {
@@ -90,14 +151,6 @@ public class LogManager
     }
 
     /// <summary>
-    /// 写入状态变更日志
-    /// </summary>
-    public void WriteStatus(string statusText)
-    {
-        WriteOperation($"状态: {statusText}");
-    }
-
-    /// <summary>
     /// 写入异常日志
     /// </summary>
     public void WriteException(Exception ex)
@@ -119,13 +172,18 @@ public class LogManager
 
         exceptionLog.AppendLine();
 
-        WriteOperation(exceptionLog.ToString());
+        WriteDebug(exceptionLog.ToString());
     }
 
     /// <summary>
-    /// 获取当前操作日志文件路径
+    /// 获取当前状态日志文件路径
     /// </summary>
-    public string? GetCurrentOperationLogPath() => _currentOperationLogPath;
+    public string? GetCurrentStatusLogPath() => _currentStatusLogPath;
+
+    /// <summary>
+    /// 获取当前调试日志文件路径
+    /// </summary>
+    public string? GetCurrentDebugLogPath() => _currentDebugLogPath;
 
     /// <summary>
     /// 获取当前编译日志文件路径
@@ -133,9 +191,9 @@ public class LogManager
     public string? GetCurrentCompileLogPath() => _currentCompileLogPath;
 
     /// <summary>
-    /// 获取日志目录路径
+    /// 获取日志根目录路径
     /// </summary>
-    public string GetLogDirectory() => _logDirectory;
+    public string GetLogDirectory() => _logRootDirectory;
 
     /// <summary>
     /// 清理旧日志文件（保留最近 30 天）
@@ -145,28 +203,38 @@ public class LogManager
         try
         {
             var cutoffDate = DateTime.Now.AddDays(-keepDays);
-            var logFiles = Directory.GetFiles(_logDirectory, "*.txt");
 
-            foreach (var file in logFiles)
-            {
-                var fileInfo = new FileInfo(file);
-                if (fileInfo.LastWriteTime < cutoffDate)
-                {
-                    try
-                    {
-                        File.Delete(file);
-                        WriteOperation($"已删除旧日志: {Path.GetFileName(file)}");
-                    }
-                    catch
-                    {
-                        // 删除失败，忽略
-                    }
-                }
-            }
+            CleanDirectory(_statusLogDirectory, cutoffDate);
+            CleanDirectory(_compileLogDirectory, cutoffDate);
+            CleanDirectory(_debugLogDirectory, cutoffDate);
         }
         catch
         {
             // 清理失败，忽略
+        }
+    }
+
+    private void CleanDirectory(string directory, DateTime cutoffDate)
+    {
+        if (!Directory.Exists(directory)) return;
+
+        var logFiles = Directory.GetFiles(directory, "*.txt");
+
+        foreach (var file in logFiles)
+        {
+            var fileInfo = new FileInfo(file);
+            if (fileInfo.LastWriteTime < cutoffDate)
+            {
+                try
+                {
+                    File.Delete(file);
+                    WriteDebug($"已删除旧日志: {Path.GetFileName(file)}");
+                }
+                catch
+                {
+                    // 删除失败，忽略
+                }
+            }
         }
     }
 
@@ -177,11 +245,11 @@ public class LogManager
     {
         try
         {
-            System.Diagnostics.Process.Start("explorer.exe", _logDirectory);
+            System.Diagnostics.Process.Start("explorer.exe", _logRootDirectory);
         }
         catch (Exception ex)
         {
-            WriteOperation($"打开日志目录失败: {ex.Message}");
+            WriteDebug($"打开日志目录失败: {ex.Message}");
         }
     }
 
@@ -190,10 +258,42 @@ public class LogManager
     /// </summary>
     public void EndSession()
     {
-        WriteOperation($"会话结束时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-        WriteOperation("===================\n");
+        WriteStatus($"会话结束时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        WriteStatus("===================\n");
 
         WriteCompile($"会话结束时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         WriteCompile("===================\n");
+
+        WriteDebug($"会话结束时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        WriteDebug("===================\n");
+    }
+
+    /// <summary>
+    /// 自定义 TraceListener，用于捕获 Debug.WriteLine 输出
+    /// </summary>
+    private class DebugTraceListener : TraceListener
+    {
+        private readonly LogManager _logManager;
+
+        public DebugTraceListener(LogManager logManager)
+        {
+            _logManager = logManager;
+        }
+
+        public override void Write(string? message)
+        {
+            if (!string.IsNullOrEmpty(message))
+            {
+                _logManager.WriteDebug(message);
+            }
+        }
+
+        public override void WriteLine(string? message)
+        {
+            if (!string.IsNullOrEmpty(message))
+            {
+                _logManager.WriteDebug(message);
+            }
+        }
     }
 }

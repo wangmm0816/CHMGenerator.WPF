@@ -100,14 +100,15 @@ public class ChmProjectGenerator
         // 把所有文件复制到 src/ 下，按 RelativePath 摆放
         CopyFilesToSrc(srcDir, rootNodes);
 
-        var hhpPath = Path.Combine(outputDir, "project.hhp");
-        var hhcPath = Path.Combine(outputDir, "toc.hhc");
-        var hhkPath = Path.Combine(outputDir, "index.hhk");
+        // 将 .hhp/.hhc/.hhk 生成到 src 目录中，这样 hhc.exe 可以在 src 目录中找到所有文件
+        var hhpPath = Path.Combine(srcDir, "project.hhp");
+        var hhcPath = Path.Combine(srcDir, "toc.hhc");
+        var hhkPath = Path.Combine(srcDir, "index.hhk");
 
         // 收集所有文件节点
         var allFiles = rootNodes.SelectMany(r => r.GetAllFileNodes()).ToList();
 
-        GenerateHhp(hhpPath, srcDir, title, defaultTopic, allFiles, fullTextSearch, binaryToc, autoIndex, wordNodeTxtMap);
+        GenerateHhp(hhpPath, srcDir, title, defaultTopic, allFiles, fullTextSearch, binaryToc, autoIndex, wordNodeTxtMap, outputDir);
         GenerateHhc(hhcPath, srcDir, title, defaultTopic, rootNodes, binaryToc, wordNodeTxtMap);
         GenerateHhk(hhkPath, srcDir, allFiles, wordNodeTxtMap);
 
@@ -338,13 +339,19 @@ public class ChmProjectGenerator
 
     private void GenerateHhp(string hhpPath, string srcDir, string title, string defaultTopic,
         List<Models.DocumentNode> allFiles, bool fullTextSearch, bool binaryToc, bool autoIndex,
-        Dictionary<Models.DocumentNode, string>? wordNodeTxtMap = null)
+        Dictionary<Models.DocumentNode, string>? wordNodeTxtMap = null, string? outputDir = null)
     {
         var sb = new StringBuilder();
 
+        // 如果 outputDir 不为空且不同于 srcDir，则 CHM 文件输出到父目录
+        var chmFileName = SanitizeFileName(title) + ".chm";
+        var compiledFile = (outputDir != null && outputDir != srcDir)
+            ? $"../{chmFileName}"  // 输出到上级目录
+            : chmFileName;         // 输出到当前目录
+
         sb.AppendLine("[OPTIONS]");
         sb.AppendLine("Compatibility=1.1 or later");
-        sb.AppendLine($"Compiled file={SanitizeFileName(title)}.chm");
+        sb.AppendLine($"Compiled file={compiledFile}");
         sb.AppendLine("Contents file=toc.hhc");
         sb.AppendLine("Index file=index.hhk");
         sb.AppendLine("Default Window=Main");
@@ -422,29 +429,14 @@ public class ChmProjectGenerator
         sb.AppendLine("<param name=\"Font\" value=\"微软雅黑,9,0\">");
         sb.AppendLine("</object>");
 
-        // 首页节点（指向默认主题）
-        if (!string.IsNullOrEmpty(defaultTopic))
-        {
-            sb.AppendLine("<ul>");
-            sb.AppendLine("    <li><object type=\"text/sitemap\">");
-            sb.AppendLine($"        <param name=\"Name\" value=\"{EscapeXml(title)}\">");
-            sb.AppendLine($"        <param name=\"Local\" value=\"{SafeHhcRelativePath(defaultTopic)}\">");
-            sb.AppendLine("    </object>");
-        }
-
-        // 递归构建树（来自文档树的节点）
-        sb.AppendLine("    <ul>");
+        // 直接构建文档树，不添加首页节点
+        // 这样目录树从实际的文档结构开始，而不是从"帮助文档"开始
+        sb.AppendLine("<ul>");
         foreach (var node in rootNodes)
         {
-            BuildHhcNode(sb, node, 2, wordNodeTxtMap);
+            BuildHhcNode(sb, node, 1, wordNodeTxtMap);
         }
-        sb.AppendLine("    </ul>");
-
-        if (!string.IsNullOrEmpty(defaultTopic))
-        {
-            sb.AppendLine("    </li>");
-            sb.AppendLine("</ul>");
-        }
+        sb.AppendLine("</ul>");
 
         sb.AppendLine("</body>");
         sb.AppendLine("</html>");
@@ -906,7 +898,7 @@ public class ChmCompiler
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                WorkingDirectory = project.OutputDir,
+                WorkingDirectory = project.SrcDir,  // 在 src 目录中运行，因为 .hhp 文件和 HTML 文件都在这里
                 StandardOutputEncoding = Encoding.GetEncoding("GB2312"),
                 StandardErrorEncoding = Encoding.GetEncoding("GB2312")
             };
