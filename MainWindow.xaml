@@ -181,7 +181,7 @@
             <ProgressBar Value="{Binding ProgressValue}" Maximum="100" Height="4"/>
         </Border>
 
-        <!-- ===== 主内容三栏 ===== -->
+        <!-- ===== 主内容四栏 ===== -->
         <Grid Margin="0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -189,6 +189,8 @@
                 <ColumnDefinition Width="350"/>
                 <ColumnDefinition Width="5"/>
                 <ColumnDefinition Width="280"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="220"/>
             </Grid.ColumnDefinitions>
 
             <!-- 左：文档树 -->
@@ -361,7 +363,7 @@
             <GridSplitter Grid.Column="3" Width="5" HorizontalAlignment="Stretch"
                           Background="{StaticResource BorderBrush}"/>
 
-            <!-- 右：CHM 目录预览 -->
+            <!-- 第三列：CHM 目录预览 -->
             <Grid Grid.Column="4" Background="{StaticResource PanelBrush}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -383,21 +385,25 @@
                     </ListBox.ItemContainerStyle>
                 </ListBox>
             </Grid>
-        </Grid>
 
-        <!-- ===== 底部日志面板（可折叠） ===== -->
-        <Expander DockPanel.Dock="Bottom" Header="编译日志" IsExpanded="False"
-                  Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
-                  BorderThickness="0,1,0,0" MaxHeight="200">
-            <TextBox Text="{Binding LogText}" IsReadOnly="True"
-                     FontFamily="{StaticResource MonoFont}" FontSize="12"
-                     Background="#1A1A1A" Foreground="{StaticResource SuccessBrush}"
-                     BorderThickness="0" Padding="8"
-                     VerticalScrollBarVisibility="Auto"
-                     HorizontalScrollBarVisibility="Auto"
-                     TextWrapping="NoWrap"
-                     Height="160"/>
-        </Expander>
+            <GridSplitter Grid.Column="5" Width="5" HorizontalAlignment="Stretch"
+                          Background="{StaticResource BorderBrush}"/>
+
+            <!-- 第四列：编译日志 -->
+            <Grid Grid.Column="6" Background="{StaticResource PanelBrush}">
+                <Expander Header="编译日志" IsExpanded="False"
+                          BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,0">
+                    <TextBox Text="{Binding LogText}" IsReadOnly="True"
+                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                             Background="#1A1A1A" Foreground="{StaticResource SuccessBrush}"
+                             BorderThickness="0" Padding="8"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto"
+                             TextWrapping="NoWrap"
+                             MinHeight="100"/>
+                </Expander>
+            </Grid>
+        </Grid>
 
     </DockPanel>
 </Window>
