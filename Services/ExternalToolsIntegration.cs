@@ -123,6 +123,10 @@ public class ExternalToolsIntegration
 
                 if (Directory.Exists(htmlDir))
                 {
+                    // 复制 Python 工具目录中的共享资源文件（css, scripts, images, fonts）
+                    // 这些文件通常在 Python 工具目录的 template 或 resources 子目录中
+                    CopySharedResourcesFromPythonTools(pythonToolsPath, Path.GetDirectoryName(htmlDir)!, progress);
+
                     result.Success = true;
                     result.HtmlDirectory = htmlDir;
                     result.TxtConfigFile = File.Exists(txtFile) ? txtFile : "";
@@ -215,5 +219,77 @@ public class ExternalToolsIntegration
         var invalidChars = Path.GetInvalidFileNameChars();
         var sanitized = string.Join("_", fileName.Split(invalidChars));
         return sanitized;
+    }
+
+    /// <summary>
+    /// 从 Python 工具目录复制共享资源文件（css, scripts, images, fonts）到输出目录
+    /// </summary>
+    private static void CopySharedResourcesFromPythonTools(string pythonToolsPath, string targetDir, IProgress<string>? progress = null)
+    {
+        try
+        {
+            // Python 工具的共享资源可能在以下位置：
+            // 1. pythonToolsPath/resource/
+            // 2. pythonToolsPath/resources/
+            // 3. pythonToolsPath/template/
+            // 4. pythonToolsPath/ 本身
+
+            var sharedDirNames = new[] { "css", "scripts", "images", "fonts" };
+            var searchPaths = new[]
+            {
+                Path.Combine(pythonToolsPath, "resource"),
+                Path.Combine(pythonToolsPath, "resources"),
+                Path.Combine(pythonToolsPath, "template"),
+                pythonToolsPath
+            };
+
+            foreach (var sharedDirName in sharedDirNames)
+            {
+                bool copied = false;
+                foreach (var searchPath in searchPaths)
+                {
+                    var sourceDir = Path.Combine(searchPath, sharedDirName);
+                    if (Directory.Exists(sourceDir))
+                    {
+                        var destDir = Path.Combine(targetDir, sharedDirName);
+                        CopyDirectory(sourceDir, destDir);
+                        progress?.Report($"  复制共享资源: {sharedDirName} → {destDir}");
+                        copied = true;
+                        break;
+                    }
+                }
+
+                if (!copied)
+                {
+                    // 没找到该共享资源目录，记录日志但不报错
+                    System.Diagnostics.Debug.WriteLine($"未找到共享资源目录: {sharedDirName}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            progress?.Report($"  警告: 复制共享资源失败: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"复制共享资源失败: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 递归复制目录
+    /// </summary>
+    private static void CopyDirectory(string sourceDir, string destDir)
+    {
+        Directory.CreateDirectory(destDir);
+
+        foreach (var file in Directory.GetFiles(sourceDir))
+        {
+            var destFile = Path.Combine(destDir, Path.GetFileName(file));
+            File.Copy(file, destFile, overwrite: true);
+        }
+
+        foreach (var subDir in Directory.GetDirectories(sourceDir))
+        {
+            var destSubDir = Path.Combine(destDir, Path.GetFileName(subDir));
+            CopyDirectory(subDir, destSubDir);
+        }
     }
 }

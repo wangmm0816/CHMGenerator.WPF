@@ -34,8 +34,9 @@ public class TxtConfigParser
     /// </summary>
     /// <param name="txtFilePath">txt 配置文件路径</param>
     /// <param name="baseFolder">基础文件夹名称（如 "apihtml"）</param>
+    /// <param name="addPrefix">是否添加 src/ 前缀（默认 true，用于兼容旧格式）</param>
     /// <returns>配置条目列表</returns>
-    public static List<ConfigEntry> Parse(string txtFilePath, string? baseFolder = null)
+    public static List<ConfigEntry> Parse(string txtFilePath, string? baseFolder = null, bool addPrefix = true)
     {
         var entries = new List<ConfigEntry>();
 
@@ -67,11 +68,11 @@ public class TxtConfigParser
                 var title = parts[1].Trim();
                 var parentPath = parts.Length >= 3 ? parts[2].Trim() : "";
 
-                // 规范化路径：确保所有路径都以 src/ 开头
-                var relativePath = NormalizePath(originalPath, baseFolder);
+                // 规范化路径：确保所有路径都以 src/ 开头（如果 addPrefix 为 true）
+                var relativePath = addPrefix ? NormalizePath(originalPath, baseFolder) : originalPath.Replace('\\', '/');
                 var normalizedParentPath = string.IsNullOrEmpty(parentPath)
                     ? ""
-                    : NormalizePath(parentPath, baseFolder);
+                    : (addPrefix ? NormalizePath(parentPath, baseFolder) : parentPath.Replace('\\', '/'));
 
                 entries.Add(new ConfigEntry
                 {

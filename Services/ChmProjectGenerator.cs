@@ -126,8 +126,60 @@ public class ChmProjectGenerator
     {
         if (!Directory.Exists(srcDir)) Directory.CreateDirectory(srcDir);
 
+        // 记录所有处理过的 html 根目录，用于后续复制共享资源
+        var htmlRootDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var node in rootNodes.SelectMany(r => r.GetAllFileNodes()))
         {
+            // Word 节点：只复制整个 Python 生成的目录结构，跳过单文件复制
+            if (node.NodeType == Models.NodeType.Word && !string.IsNullOrEmpty(node.ConvertedHtmlPath))
+            {
+                var sourceFileDir = Path.GetDirectoryName(node.ConvertedHtmlPath);
+                if (!string.IsNullOrEmpty(sourceFileDir))
+                {
+                    // 检查是否是 Python 生成的（在 html 目录下）
+                    var outputDir = Path.GetDirectoryName(srcDir); // src 的父目录
+                    var htmlDir = Path.Combine(outputDir ?? "", "html");
+
+                    if (sourceFileDir.StartsWith(htmlDir, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Python 生成的文件，复制整个目录结构
+                        // 找到文档的根目录（如 html/产品说明书/）
+                        var relativePathFromHtml = sourceFileDir.Substring(htmlDir.Length).TrimStart(Path.DirectorySeparatorChar, '/');
+                        var firstSep = relativePathFromHtml.IndexOfAny(new[] { Path.DirectorySeparatorChar, '/' });
+                        string docRootName;
+                        if (firstSep > 0)
+                        {
+                            docRootName = relativePathFromHtml.Substring(0, firstSep);
+                        }
+                        else
+                        {
+                            docRootName = relativePathFromHtml;
+                        }
+
+                        var docRootDir = Path.Combine(htmlDir, docRootName);
+                        if (Directory.Exists(docRootDir))
+                        {
+                            // 目标目录：src/{父路径}/{文档根名}
+                            // 获取节点的父路径
+                            var parentPathPrefix = GetNodePathPrefix(node);
+                            var destDocRoot = string.IsNullOrEmpty(parentPathPrefix)
+                                ? Path.Combine(srcDir, docRootName)
+                                : Path.Combine(srcDir, parentPathPrefix.Replace('/', Path.DirectorySeparatorChar), docRootName);
+
+                            // 递归复制整个文档目录
+                            CopyDirectory(docRootDir, destDocRoot);
+                            System.Diagnostics.Debug.WriteLine($"复制 Python 文档目录: {docRootDir} → {destDocRoot}");
+
+                            // 记录 html 根目录，用于后续复制共享资源
+                            htmlRootDirs.Add(htmlDir);
+                        }
+                    }
+                }
+                continue; // 跳过后续的单文件复制逻辑
+            }
+
+            // 普通 HTML 文件：单文件复制
             var sourcePath = node.EffectiveHtmlPath;
 
             // 检查源文件是否存在
@@ -160,68 +212,36 @@ public class ChmProjectGenerator
                 System.Diagnostics.Debug.WriteLine($"复制文件失败: {sourcePath} - {ex.Message}");
                 throw new Exception($"复制文件失败: {Path.GetFileName(sourcePath)} - {ex.Message}", ex);
             }
+        }
 
-            // 复制关联的文件（Word 转换产生的）
-            if (node.NodeType == Models.NodeType.Word && !string.IsNullOrEmpty(node.ConvertedHtmlPath))
+        // 复制 Python 生成的共享资源目录（css, scripts, images 等）
+        // 需要复制到每个 Word 节点的父路径下，以匹配 HTML 中的相对路径
+        foreach (var htmlDir in htmlRootDirs)
+        {
+            if (Directory.Exists(htmlDir))
             {
-                var sourceFileDir = Path.GetDirectoryName(node.ConvertedHtmlPath);
-                if (!string.IsNullOrEmpty(sourceFileDir))
+                // 查找所有 Word 节点的父路径
+                var wordNodes = rootNodes.SelectMany(r => r.GetAllFileNodes())
+                    .Where(n => n.NodeType == Models.NodeType.Word)
+                    .ToList();
+
+                foreach (var wordNode in wordNodes)
                 {
-                    // 检查是否是 Python 生成的（在 html 目录下）
-                    var outputDir = Path.GetDirectoryName(srcDir); // src 的父目录
-                    var htmlDir = Path.Combine(outputDir ?? "", "html");
+                    var parentPathPrefix = GetNodePathPrefix(wordNode);
+                    var targetDir = string.IsNullOrEmpty(parentPathPrefix)
+                        ? srcDir
+                        : Path.Combine(srcDir, parentPathPrefix.Replace('/', Path.DirectorySeparatorChar));
 
-                    if (sourceFileDir.StartsWith(htmlDir, StringComparison.OrdinalIgnoreCase))
+                    // 查找并复制共享资源目录（css, scripts, images 等）
+                    var sharedDirs = new[] { "css", "scripts", "images", "fonts" };
+                    foreach (var sharedDirName in sharedDirs)
                     {
-                        // Python 生成的文件，复制整个目录结构
-                        // 找到文档的根目录（如 html/产品说明书/）
-                        var relativePathFromHtml = sourceFileDir.Substring(htmlDir.Length).TrimStart(Path.DirectorySeparatorChar, '/');
-                        var firstSep = relativePathFromHtml.IndexOfAny(new[] { Path.DirectorySeparatorChar, '/' });
-                        string docRootName;
-                        if (firstSep > 0)
+                        var sharedSrcDir = Path.Combine(htmlDir, sharedDirName);
+                        if (Directory.Exists(sharedSrcDir))
                         {
-                            docRootName = relativePathFromHtml.Substring(0, firstSep);
-                        }
-                        else
-                        {
-                            docRootName = relativePathFromHtml;
-                        }
-
-                        var docRootDir = Path.Combine(htmlDir, docRootName);
-                        if (Directory.Exists(docRootDir))
-                        {
-                            // 目标目录：src/{节点的目录}/{文档根名}
-                            var nodeDir = Path.GetDirectoryName(destPath);
-                            var destDocRoot = Path.Combine(nodeDir ?? srcDir, docRootName);
-
-                            // 递归复制整个文档目录
-                            CopyDirectory(docRootDir, destDocRoot);
-                            System.Diagnostics.Debug.WriteLine($"复制 Python 文档目录: {docRootDir} → {destDocRoot}");
-                        }
-                    }
-                    else
-                    {
-                        // 内置转换器生成的图片目录
-                        var imageDir = Path.Combine(sourceFileDir, Path.GetFileNameWithoutExtension(node.ConvertedHtmlPath) + "_images");
-
-                        if (Directory.Exists(imageDir))
-                        {
-                            var destImageDir = Path.Combine(destDir ?? srcDir,
-                                Path.GetFileNameWithoutExtension(destPath) + "_images");
-                            if (!Directory.Exists(destImageDir)) Directory.CreateDirectory(destImageDir);
-
-                            try
-                            {
-                                foreach (var img in Directory.GetFiles(imageDir))
-                                {
-                                    File.Copy(img, Path.Combine(destImageDir, Path.GetFileName(img)), overwrite: true);
-                                }
-                                System.Diagnostics.Debug.WriteLine($"复制图片目录: {imageDir} → {destImageDir}");
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"复制图片失败: {imageDir} - {ex.Message}");
-                            }
+                            var sharedDestDir = Path.Combine(targetDir, sharedDirName);
+                            CopyDirectory(sharedSrcDir, sharedDestDir);
+                            System.Diagnostics.Debug.WriteLine($"复制共享资源目录: {sharedSrcDir} → {sharedDestDir}");
                         }
                     }
                 }
@@ -356,13 +376,13 @@ public class ChmProjectGenerator
                 var txtFile = kvp.Value;
                 if (File.Exists(txtFile))
                 {
-                    var entries = TxtConfigParser.Parse(txtFile);
-                    var nodePathPrefix = GetNodePathPrefix(wordNode);
+                    var entries = TxtConfigParser.Parse(txtFile, baseFolder: null, addPrefix: false);
+                    var fullPathPrefix = GetWordNodeFullPathPrefix(wordNode);
                     foreach (var entry in entries)
                     {
-                        var fullPath = string.IsNullOrEmpty(nodePathPrefix)
+                        var fullPath = string.IsNullOrEmpty(fullPathPrefix)
                             ? entry.RelativePath
-                            : $"{nodePathPrefix}/{entry.RelativePath}";
+                            : $"{fullPathPrefix}/{entry.RelativePath}";
                         sb.AppendLine(SafeHhcRelativePath(fullPath));
                     }
                 }
@@ -485,6 +505,8 @@ public class ChmProjectGenerator
                 ? entry.RelativePath
                 : $"{pathPrefix}/{entry.RelativePath}";
 
+            System.Diagnostics.Debug.WriteLine($"    BuildHhcTreeNodesWithPrefix: Title={entry.Title}, entry.RelativePath={entry.RelativePath}, pathPrefix={pathPrefix}, fullPath={fullPath}");
+
             // 检查当前节点是否有子节点
             bool hasChildren = childrenMap.ContainsKey(entry.RelativePath);
 
@@ -528,6 +550,38 @@ public class ChmProjectGenerator
             current = current.Parent;
         }
         return string.Join("/", parts);
+    }
+
+    /// <summary>
+    /// 获取 Word 节点的完整路径前缀（父路径 + 文档目录名）
+    /// </summary>
+    private string GetWordNodeFullPathPrefix(Models.DocumentNode wordNode)
+    {
+        // 从 ConvertedHtmlPath 提取文档目录名
+        // 例如：html/产品说明书/chapter_1/chapter_1.html → 产品说明书
+        var docDirName = "";
+        if (!string.IsNullOrEmpty(wordNode.ConvertedHtmlPath))
+        {
+            var htmlPath = wordNode.ConvertedHtmlPath;
+            var dir = Path.GetDirectoryName(htmlPath);
+            // 向上找到 html 目录的直接子目录
+            while (!string.IsNullOrEmpty(dir))
+            {
+                var parentDir = Path.GetDirectoryName(dir);
+                if (!string.IsNullOrEmpty(parentDir) &&
+                    Path.GetFileName(parentDir).Equals("html", StringComparison.OrdinalIgnoreCase))
+                {
+                    docDirName = Path.GetFileName(dir);
+                    break;
+                }
+                dir = parentDir;
+            }
+        }
+
+        var parentPathPrefix = GetNodePathPrefix(wordNode);
+        return string.IsNullOrEmpty(parentPathPrefix)
+            ? docDirName
+            : $"{parentPathPrefix}/{docDirName}";
     }
     private void BuildHhcTreeNodes(StringBuilder sb, Dictionary<string, List<TxtConfigParser.ConfigEntry>> childrenMap,
         string parentPath, int level)
@@ -593,10 +647,11 @@ public class ChmProjectGenerator
             var txtFile = wordNodeTxtMap[node];
             if (File.Exists(txtFile))
             {
-                var entries = TxtConfigParser.Parse(txtFile);
-                var nodePathPrefix = GetNodePathPrefix(node);
+                var entries = TxtConfigParser.Parse(txtFile, baseFolder: null, addPrefix: false);
+                var fullPathPrefix = GetWordNodeFullPathPrefix(node);
 
-                System.Diagnostics.Debug.WriteLine($"  → Word 节点，展开 txt: {txtFile}, 前缀: {nodePathPrefix}");
+                System.Diagnostics.Debug.WriteLine($"  → Word 节点，展开 txt: {txtFile}");
+                System.Diagnostics.Debug.WriteLine($"     完整路径前缀: {fullPathPrefix}");
 
                 // 构建父子关系映射
                 var childrenMap = new Dictionary<string, List<TxtConfigParser.ConfigEntry>>();
@@ -611,7 +666,7 @@ public class ChmProjectGenerator
                 }
 
                 // 从根节点开始递归构建，添加路径前缀
-                BuildHhcTreeNodesWithPrefix(sb, childrenMap, "", level, nodePathPrefix);
+                BuildHhcTreeNodesWithPrefix(sb, childrenMap, "", level, fullPathPrefix);
             }
             else
             {
@@ -670,13 +725,13 @@ public class ChmProjectGenerator
                 var txtFile = kvp.Value;
                 if (File.Exists(txtFile))
                 {
-                    var entries = TxtConfigParser.Parse(txtFile);
-                    var nodePathPrefix = GetNodePathPrefix(wordNode);
+                    var entries = TxtConfigParser.Parse(txtFile, baseFolder: null, addPrefix: false);
+                    var fullPathPrefix = GetWordNodeFullPathPrefix(wordNode);
                     foreach (var entry in entries)
                     {
-                        var fullPath = string.IsNullOrEmpty(nodePathPrefix)
+                        var fullPath = string.IsNullOrEmpty(fullPathPrefix)
                             ? entry.RelativePath
-                            : $"{nodePathPrefix}/{entry.RelativePath}";
+                            : $"{fullPathPrefix}/{entry.RelativePath}";
                         allEntries.Add((entry.Title, fullPath));
                     }
                 }
