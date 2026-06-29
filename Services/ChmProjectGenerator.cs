@@ -123,6 +123,11 @@ public class ChmProjectGenerator
         };
     }
 
+    /// <summary>
+    /// 将文档节点的文件复制到 src 目录，按照节点的 RelativePath 组织目录结构
+    /// 对于 Word 节点，复制整个 Python 生成的目录结构
+    /// 对于普通 HTML 文件，复制单个文件
+    /// </summary>
     private void CopyFilesToSrc(string srcDir, IReadOnlyList<Models.DocumentNode> rootNodes)
     {
         if (!Directory.Exists(srcDir)) Directory.CreateDirectory(srcDir);
@@ -337,6 +342,20 @@ public class ChmProjectGenerator
         }
     }
 
+    /// <summary>
+    /// 生成 .hhp 项目文件（HTML Help Project）
+    /// 包含 CHM 编译选项和文件列表
+    /// </summary>
+    /// <param name="hhpPath">.hhp 文件路径</param>
+    /// <param name="srcDir">源文件目录</param>
+    /// <param name="title">CHM 标题</param>
+    /// <param name="defaultTopic">默认首页</param>
+    /// <param name="allFiles">所有文件节点</param>
+    /// <param name="fullTextSearch">是否启用全文搜索</param>
+    /// <param name="binaryToc">是否使用二进制目录</param>
+    /// <param name="autoIndex">是否自动索引</param>
+    /// <param name="wordNodeTxtMap">Word 节点到 txt 配置文件的映射</param>
+    /// <param name="outputDir">输出目录（用于计算 CHM 文件输出路径）</param>
     private void GenerateHhp(string hhpPath, string srcDir, string title, string defaultTopic,
         List<Models.DocumentNode> allFiles, bool fullTextSearch, bool binaryToc, bool autoIndex,
         Dictionary<Models.DocumentNode, string>? wordNodeTxtMap = null, string? outputDir = null)
@@ -399,6 +418,17 @@ public class ChmProjectGenerator
         File.WriteAllBytes(hhpPath, Encoding.GetEncoding("GB2312").GetBytes(sb.ToString()));
     }
 
+    /// <summary>
+    /// 生成 .hhc 目录文件（HTML Help Contents）
+    /// 定义 CHM 的树形目录结构
+    /// </summary>
+    /// <param name="hhcPath">.hhc 文件路径</param>
+    /// <param name="srcDir">源文件目录</param>
+    /// <param name="title">CHM 标题</param>
+    /// <param name="defaultTopic">默认首页</param>
+    /// <param name="rootNodes">文档树根节点</param>
+    /// <param name="binaryToc">是否使用二进制目录</param>
+    /// <param name="wordNodeTxtMap">Word 节点到 txt 配置文件的映射</param>
     private void GenerateHhc(string hhcPath, string srcDir, string title, string defaultTopic,
         IReadOnlyList<Models.DocumentNode> rootNodes, bool binaryToc,
         Dictionary<Models.DocumentNode, string>? wordNodeTxtMap = null)
@@ -612,6 +642,14 @@ public class ChmProjectGenerator
         }
     }
 
+    /// <summary>
+    /// 递归构建 .hhc 文件的节点结构
+    /// 对于 Word 节点，展开 Python 生成的 txt 配置文件中的层级结构
+    /// </summary>
+    /// <param name="sb">字符串构建器</param>
+    /// <param name="node">当前节点</param>
+    /// <param name="level">当前层级（用于缩进）</param>
+    /// <param name="wordNodeTxtMap">Word 节点到 txt 配置文件的映射</param>
     private void BuildHhcNode(StringBuilder sb, Models.DocumentNode node, int level,
         Dictionary<Models.DocumentNode, string>? wordNodeTxtMap = null)
     {
