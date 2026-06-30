@@ -387,9 +387,13 @@ public class ChmProjectGenerator
         sb.AppendLine();
         sb.AppendLine("[FILES]");
 
-        // 添加来自文档树的文件
+        // 添加来自文档树的文件（跳过 Word 节点，因为 Word 节点会在后面从 txt 配置中添加）
         foreach (var file in allFiles)
         {
+            // 跳过 Word 节点，它们的文件列表从 Python txt 配置中获取
+            if (file.NodeType == Models.NodeType.Word)
+                continue;
+
             sb.AppendLine(SafeHhcRelativePath(file.RelativePath));
         }
 

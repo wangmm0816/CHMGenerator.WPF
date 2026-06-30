@@ -230,9 +230,16 @@ public class DocumentNode : INotifyPropertyChanged
         }
     }
 
-    /// <summary>递归获取所有文件节点</summary>
+    /// <summary>递归获取所有文件节点（包括自己如果是文件）</summary>
     public IEnumerable<DocumentNode> GetAllFileNodes()
     {
+        // 如果自己是文件节点，先返回自己
+        if (!IsFolder)
+        {
+            yield return this;
+        }
+
+        // 然后遍历子节点
         foreach (var child in Children)
         {
             if (child.IsFolder)

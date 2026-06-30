@@ -68,6 +68,14 @@ public class TxtConfigParser
                 var title = parts[1].Trim();
                 var parentPath = parts.Length >= 3 ? parts[2].Trim() : "";
 
+                // 修正路径：如果是 chapter_N.html（没有子目录），补充为 chapter_N/chapter_N.html
+                if (!originalPath.Contains('/') && !originalPath.Contains('\\') &&
+                    originalPath.StartsWith("chapter_") && originalPath.EndsWith(".html"))
+                {
+                    var chapterName = Path.GetFileNameWithoutExtension(originalPath);
+                    originalPath = $"{chapterName}/{originalPath}";
+                }
+
                 // 规范化路径：确保所有路径都以 src/ 开头（如果 addPrefix 为 true）
                 var relativePath = addPrefix ? NormalizePath(originalPath, baseFolder) : originalPath.Replace('\\', '/');
                 var normalizedParentPath = string.IsNullOrEmpty(parentPath)
@@ -108,6 +116,13 @@ public class TxtConfigParser
         // 如果已经以 src/ 开头，直接返回
         if (path.StartsWith("src/", StringComparison.OrdinalIgnoreCase))
             return path;
+
+        // 特殊处理：如果路径是 chapter_N.html（没有子目录），补充为 chapter_N/chapter_N.html
+        if (!path.Contains('/') && path.StartsWith("chapter_") && path.EndsWith(".html"))
+        {
+            var chapterName = Path.GetFileNameWithoutExtension(path); // 例如 "chapter_1"
+            path = $"{chapterName}/{path}"; // 变成 "chapter_1/chapter_1.html"
+        }
 
         // 如果以基础文件夹名称开头，加上 src/ 前缀
         if (!string.IsNullOrEmpty(baseFolder) &&
