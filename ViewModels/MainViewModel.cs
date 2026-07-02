@@ -439,34 +439,70 @@ public partial class MainViewModel : ObservableObject
 
         var folderPath = dlg.FolderName;
         var folderName = Path.GetFileName(folderPath);
-        var folderNode = new DocumentNode
-        {
-            Title = folderName,
-            NodeType = NodeType.Folder
-        };
 
         // 根据当前选中决定父节点
         var targetFolder = GetTargetFolderForAdd();
-        folderNode.Parent = targetFolder;
 
-        // 递归扫描文件夹下的 HTML/Word
-        AddFilesFromDirectory(folderPath, folderNode);
-
-        if (targetFolder == null)
+        // 检测是否是 API HTML 目录
+        if (ApiHtmlScanner.IsApiHtmlDirectory(folderPath))
         {
-            RootNodes.Add(folderNode);
+            // API HTML 目录：直接扫描并将子节点添加到父级，不创建容器节点
+            var scannedNodes = ApiHtmlScanner.Scan(folderPath);
+
+            foreach (var node in scannedNodes)
+            {
+                node.Parent = targetFolder;
+                if (targetFolder == null)
+                {
+                    RootNodes.Add(node);
+                }
+                else
+                {
+                    targetFolder.Children.Add(node);
+                }
+            }
+
+            if (targetFolder != null)
+            {
+                targetFolder.IsExpanded = true;
+            }
+
+            RefreshPreview();
+            StatusText = targetFolder == null
+                ? $"已添加 API HTML 内容到根目录: {folderName} ({scannedNodes.Count} 个根节点)"
+                : $"已添加 API HTML 内容到 {targetFolder.Title}: {folderName} ({scannedNodes.Count} 个根节点)";
+
+            LogManager.Instance.WriteOperation($"添加 API HTML 内容: {folderName} ({scannedNodes.Count} 个根节点)");
         }
         else
         {
-            targetFolder.Children.Add(folderNode);
-            targetFolder.IsExpanded = true;
-        }
+            // 普通文件夹：递归扫描
+            var folderNode = new DocumentNode
+            {
+                Title = folderName,
+                NodeType = NodeType.Folder,
+                Parent = targetFolder
+            };
 
-        SelectedNode = folderNode;
-        RefreshPreview();
-        StatusText = targetFolder == null
-            ? $"已添加文件夹到根目录: {folderName}"
-            : $"已添加文件夹到 {targetFolder.Title}: {folderName}";
+            // 递归扫描文件夹下的 HTML/Word
+            AddFilesFromDirectory(folderPath, folderNode);
+
+            if (targetFolder == null)
+            {
+                RootNodes.Add(folderNode);
+            }
+            else
+            {
+                targetFolder.Children.Add(folderNode);
+                targetFolder.IsExpanded = true;
+            }
+
+            SelectedNode = folderNode;
+            RefreshPreview();
+            StatusText = targetFolder == null
+                ? $"已添加文件夹到根目录: {folderName}"
+                : $"已添加文件夹到 {targetFolder.Title}: {folderName}";
+        }
     }
 
     private void AddFilesFromDirectory(string dir, DocumentNode parentNode)

@@ -69,6 +69,8 @@ public class NodeTypeToIconConverter : IValueConverter
                 NodeType.Html => "🌐",
                 NodeType.Word => "📝",
                 NodeType.ConvertedHtml => "✅",
+                NodeType.ApiHtmlRoot => "📦",
+                NodeType.ApiHtml => "📘",
                 _ => "📄"
             };
         }
@@ -94,6 +96,8 @@ public class NodeTypeToTextConverter : IValueConverter
                 NodeType.Html => "HTML 文件",
                 NodeType.Word => "Word 文档 (待自动转换)",
                 NodeType.ConvertedHtml => "HTML 文件 (已转换)",
+                NodeType.ApiHtmlRoot => "API HTML 目录",
+                NodeType.ApiHtml => "API HTML 文件",
                 _ => "未知"
             };
         }

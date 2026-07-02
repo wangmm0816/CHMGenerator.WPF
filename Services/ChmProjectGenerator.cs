@@ -126,6 +126,7 @@ public class ChmProjectGenerator
     /// <summary>
     /// 将文档节点的文件复制到 src 目录，按照节点的 RelativePath 组织目录结构
     /// 对于 Word 节点，复制整个 Python 生成的目录结构
+    /// 对于 API HTML 节点，复制单个文件并记录源目录用于复制共享资源
     /// 对于普通 HTML 文件，复制单个文件
     /// </summary>
     private void CopyFilesToSrc(string srcDir, IReadOnlyList<Models.DocumentNode> rootNodes)
@@ -135,8 +136,60 @@ public class ChmProjectGenerator
         // 记录所有处理过的 html 根目录，用于后续复制共享资源
         var htmlRootDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        // 记录所有 API HTML 源目录（用于复制 css/scripts）
+        var apiHtmlSourceDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var node in rootNodes.SelectMany(r => r.GetAllFileNodes()))
         {
+            // API HTML 节点：复制单个文件，记录源目录
+            if (node.NodeType == Models.NodeType.ApiHtml && !string.IsNullOrEmpty(node.SourcePath))
+            {
+                var apiSourcePath = node.SourcePath;
+
+                if (!File.Exists(apiSourcePath))
+                {
+                    System.Diagnostics.Debug.WriteLine($"警告: API HTML 文件不存在: {apiSourcePath}");
+                    continue;
+                }
+
+                // 查找 ApiHtmlSourceDir（可能在当前节点或祖先节点）
+                string? apiHtmlSourceDir = node.ApiHtmlSourceDir;
+                if (string.IsNullOrEmpty(apiHtmlSourceDir))
+                {
+                    var ancestor = node.Parent;
+                    while (ancestor != null && string.IsNullOrEmpty(apiHtmlSourceDir))
+                    {
+                        apiHtmlSourceDir = ancestor.ApiHtmlSourceDir;
+                        ancestor = ancestor.Parent;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(apiHtmlSourceDir))
+                {
+                    apiHtmlSourceDirs.Add(apiHtmlSourceDir);
+                }
+
+                // 计算目标路径
+                var apiRelativePath = SafeHhcRelativePath(node.RelativePath);
+                var apiDestPath = Path.Combine(srcDir, apiRelativePath.Replace('/', Path.DirectorySeparatorChar));
+                var apiDestDir = Path.GetDirectoryName(apiDestPath);
+                if (!string.IsNullOrEmpty(apiDestDir)) Directory.CreateDirectory(apiDestDir);
+
+                // 复制 HTML 文件
+                try
+                {
+                    File.Copy(apiSourcePath, apiDestPath, overwrite: true);
+                    System.Diagnostics.Debug.WriteLine($"复制 API HTML 文件: {apiSourcePath} → {apiDestPath}");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"复制 API HTML 文件失败: {apiSourcePath} - {ex.Message}");
+                    throw new Exception($"复制文件失败: {Path.GetFileName(apiSourcePath)} - {ex.Message}", ex);
+                }
+
+                continue; // 跳过后续逻辑
+            }
+
             // Word 节点：只复制整个 Python 生成的目录结构，跳过单文件复制
             if (node.NodeType == Models.NodeType.Word && !string.IsNullOrEmpty(node.ConvertedHtmlPath))
             {
@@ -253,6 +306,96 @@ public class ChmProjectGenerator
                 }
             }
         }
+
+        // 复制 API HTML 的共享资源目录（css, scripts 等）
+        // 为每个 API HTML 目录组找到其在 src 中的根路径，将 css/scripts 复制到该路径下
+        // 这样可以支持多个 API HTML 目录，避免资源文件互相覆盖
+        foreach (var apiHtmlSourceDir in apiHtmlSourceDirs)
+        {
+            if (Directory.Exists(apiHtmlSourceDir))
+            {
+                System.Diagnostics.Debug.WriteLine($"处理 API HTML 源目录: {apiHtmlSourceDir}");
+
+                // 找到使用这个源目录的所有 API HTML 节点
+                var nodesFromThisSource = rootNodes.SelectMany(r => r.DescendantsAndSelf())
+                    .Where(n => n.NodeType == Models.NodeType.ApiHtml &&
+                                !string.IsNullOrEmpty(n.ApiHtmlSourceDir) &&
+                                n.ApiHtmlSourceDir.Equals(apiHtmlSourceDir, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (nodesFromThisSource.Count == 0)
+                {
+                    // 尝试从节点的祖先查找 ApiHtmlSourceDir
+                    nodesFromThisSource = rootNodes.SelectMany(r => r.DescendantsAndSelf())
+                        .Where(n => n.NodeType == Models.NodeType.ApiHtml &&
+                                    FindApiHtmlSourceDir(n) == apiHtmlSourceDir)
+                        .ToList();
+                }
+
+                if (nodesFromThisSource.Count > 0)
+                {
+                    // 找到这组节点的共同父路径（在 src 中的位置）
+                    var firstNode = nodesFromThisSource[0];
+                    var nodeParentPath = GetNodeParentPathInSrc(firstNode);
+
+                    var targetBaseDir = string.IsNullOrEmpty(nodeParentPath)
+                        ? srcDir
+                        : Path.Combine(srcDir, nodeParentPath.Replace('/', Path.DirectorySeparatorChar));
+
+                    System.Diagnostics.Debug.WriteLine($"  API HTML 节点父路径: {nodeParentPath}");
+                    System.Diagnostics.Debug.WriteLine($"  目标根目录: {targetBaseDir}");
+
+                    // 复制共享资源目录到目标根目录
+                    var sharedDirs = new[] { "css", "scripts", "images", "fonts" };
+                    foreach (var sharedDirName in sharedDirs)
+                    {
+                        var sharedSrcDir = Path.Combine(apiHtmlSourceDir, sharedDirName);
+                        if (Directory.Exists(sharedSrcDir))
+                        {
+                            var sharedDestDir = Path.Combine(targetBaseDir, sharedDirName);
+                            CopyDirectory(sharedSrcDir, sharedDestDir);
+                            System.Diagnostics.Debug.WriteLine($"  复制 API HTML 共享资源: {sharedSrcDir} → {sharedDestDir}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 查找节点或其祖先的 ApiHtmlSourceDir
+    /// </summary>
+    private static string? FindApiHtmlSourceDir(Models.DocumentNode node)
+    {
+        var current = node;
+        while (current != null)
+        {
+            if (!string.IsNullOrEmpty(current.ApiHtmlSourceDir))
+                return current.ApiHtmlSourceDir;
+            current = current.Parent;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 获取节点在 src 中的父路径（不包括节点自身）
+    /// 例如：节点在树中的位置是 B/API/UserCode，返回 "B"
+    /// </summary>
+    private static string GetNodeParentPathInSrc(Models.DocumentNode node)
+    {
+        var parts = new List<string>();
+        var current = node.Parent;
+
+        while (current != null)
+        {
+            if (!string.IsNullOrEmpty(current.Title) && current.NodeType != Models.NodeType.ApiHtmlRoot)
+            {
+                parts.Insert(0, SanitizeFileName(current.Title));
+            }
+            current = current.Parent;
+        }
+
+        return string.Join("/", parts);
     }
 
     /// <summary>
@@ -661,6 +804,17 @@ public class ChmProjectGenerator
 
         System.Diagnostics.Debug.WriteLine($"BuildHhcNode: level={level}, Title={node.Title}, IsFolder={node.IsFolder}, Children={node.Children.Count}");
 
+        // API HTML 根节点：虚拟节点，不出现在 CHM 目录中，直接展开子节点
+        if (node.NodeType == Models.NodeType.ApiHtmlRoot)
+        {
+            System.Diagnostics.Debug.WriteLine($"  → ApiHtmlRoot 虚拟节点，直接展开子节点");
+            foreach (var child in node.Children)
+            {
+                BuildHhcNode(sb, child, level, wordNodeTxtMap);  // 注意：level 不增加
+            }
+            return;
+        }
+
         if (node.IsFolder)
         {
             // 文件夹节点
@@ -674,6 +828,23 @@ public class ChmProjectGenerator
             }
             sb.AppendLine($"{indent}</ul>");
             sb.AppendLine($"{indent}</li>");
+        }
+        else if (node.NodeType == Models.NodeType.ApiHtml && node.Children.Count > 0)
+        {
+            // API HTML 文件节点且有子节点：作为可展开的目录节点
+            sb.AppendLine($"{indent}<li><object type=\"text/sitemap\">");
+            sb.AppendLine($"{indent}    <param name=\"Name\" value=\"{EscapeXml(node.Title)}\">");
+            sb.AppendLine($"{indent}    <param name=\"Local\" value=\"{SafeHhcRelativePath(node.RelativePath)}\">");
+            sb.AppendLine($"{indent}</object>");
+            sb.AppendLine($"{indent}<ul>");
+            foreach (var child in node.Children)
+            {
+                BuildHhcNode(sb, child, level + 1, wordNodeTxtMap);
+            }
+            sb.AppendLine($"{indent}</ul>");
+            sb.AppendLine($"{indent}</li>");
+
+            System.Diagnostics.Debug.WriteLine($"  → API HTML 节点(有子节点): RelativePath={node.RelativePath}, Children={node.Children.Count}");
         }
         else if (node.NodeType == Models.NodeType.Word && wordNodeTxtMap != null && wordNodeTxtMap.ContainsKey(node))
         {

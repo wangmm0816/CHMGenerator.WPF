@@ -18,7 +18,11 @@ public enum NodeType
     /// <summary>Word 文件（待转换）</summary>
     Word,
     /// <summary>转换后的 HTML 文件</summary>
-    ConvertedHtml
+    ConvertedHtml,
+    /// <summary>API HTML 根目录（虚拟节点，不出现在 CHM 目录中）</summary>
+    ApiHtmlRoot,
+    /// <summary>API HTML 文件</summary>
+    ApiHtml
 }
 
 /// <summary>
@@ -36,6 +40,7 @@ public class DocumentNode : INotifyPropertyChanged
     private ImageSource? _icon;
     private DocumentNode? _parent;
     private int _order;
+    private string? _apiHtmlSourceDir;  // API HTML 的源目录路径
 
     /// <summary>节点在父级中的顺序</summary>
     public int Order
@@ -128,11 +133,21 @@ public class DocumentNode : INotifyPropertyChanged
     /// <summary>子节点集合</summary>
     public ObservableCollection<DocumentNode> Children { get; } = new();
 
+    /// <summary>API HTML 的源目录路径</summary>
+    public string? ApiHtmlSourceDir
+    {
+        get => _apiHtmlSourceDir;
+        set { _apiHtmlSourceDir = value; OnPropertyChanged(); }
+    }
+
     /// <summary>是否是文件夹</summary>
-    public bool IsFolder => NodeType == NodeType.Folder;
+    public bool IsFolder => NodeType == NodeType.Folder || NodeType == NodeType.ApiHtmlRoot;
 
     /// <summary>是否是文件</summary>
     public bool IsFile => !IsFolder;
+
+    /// <summary>是否是 API HTML 根节点</summary>
+    public bool IsApiHtmlRoot => NodeType == NodeType.ApiHtmlRoot;
 
     /// <summary>节点深度</summary>
     public int Depth
@@ -160,6 +175,80 @@ public class DocumentNode : INotifyPropertyChanged
                 if (current.IsFolder)
                 {
                     parts.Add(SanitizeFileName(current.Title));
+                }
+                else if (current.NodeType == NodeType.ApiHtml)
+                {
+                    // API HTML 文件：从 SourcePath 提取相对于 API HTML 根目录的路径
+                    if (!string.IsNullOrEmpty(current.SourcePath))
+                    {
+                        // 查找最近的包含 ApiHtmlSourceDir 的祖先节点
+                        string? apiHtmlSourceDir = current.ApiHtmlSourceDir;
+                        if (string.IsNullOrEmpty(apiHtmlSourceDir))
+                        {
+                            var ancestor = current.Parent;
+                            while (ancestor != null && string.IsNullOrEmpty(apiHtmlSourceDir))
+                            {
+                                apiHtmlSourceDir = ancestor.ApiHtmlSourceDir;
+                                ancestor = ancestor.Parent;
+                            }
+                        }
+
+                        if (!string.IsNullOrEmpty(apiHtmlSourceDir))
+                        {
+                            // 计算相对于 API HTML 源目录的路径
+                            if (current.SourcePath.StartsWith(apiHtmlSourceDir, StringComparison.OrdinalIgnoreCase))
+                            {
+                                var relativePath = current.SourcePath.Substring(apiHtmlSourceDir.Length)
+                                    .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                                    .Replace('\\', '/');
+
+                                // relativePath 已经是完整路径，直接使用
+                                // 但需要添加非 API HTML 的父节点前缀（如果存在）
+                                var parentPrefixParts = new List<string>();
+                                var parentNode = current.Parent;
+                                while (parentNode != null)
+                                {
+                                    // 只添加普通文件夹节点，跳过其他 API HTML 节点
+                                    if (parentNode.NodeType == NodeType.Folder && !string.IsNullOrEmpty(parentNode.Title))
+                                    {
+                                        parentPrefixParts.Insert(0, SanitizeFileName(parentNode.Title));
+                                    }
+                                    parentNode = parentNode.Parent;
+                                }
+
+                                if (parentPrefixParts.Count > 0)
+                                {
+                                    return string.Join("/", parentPrefixParts) + "/" + relativePath;
+                                }
+                                return relativePath;
+                            }
+                            else
+                            {
+                                parts.Add(Path.GetFileName(current.SourcePath));
+                            }
+                        }
+                        else
+                        {
+                            parts.Add(Path.GetFileName(current.SourcePath));
+                        }
+                    }
+                    else
+                    {
+                        parts.Add($"{SanitizeFileName(current.Title)}.html");
+                    }
+
+                    // 向上遍历父节点，添加普通文件夹（跳过 ApiHtmlRoot 和其他 ApiHtml）
+                    current = current.Parent;
+                    while (current != null)
+                    {
+                        if (current.NodeType == NodeType.Folder && !string.IsNullOrEmpty(current.Title))
+                        {
+                            parts.Insert(0, SanitizeFileName(current.Title));
+                        }
+                        current = current.Parent;
+                    }
+
+                    return string.Join("/", parts);
                 }
                 else if (current.NodeType == NodeType.Word)
                 {
@@ -233,8 +322,9 @@ public class DocumentNode : INotifyPropertyChanged
     /// <summary>递归获取所有文件节点（包括自己如果是文件）</summary>
     public IEnumerable<DocumentNode> GetAllFileNodes()
     {
-        // 如果自己是文件节点，先返回自己
-        if (!IsFolder)
+        // 如果自己是文件节点（不是纯文件夹），返回自己
+        // API HTML 节点既是文件又可能有子节点，需要返回
+        if (!IsFolder || NodeType == NodeType.ApiHtml)
         {
             yield return this;
         }
@@ -242,13 +332,10 @@ public class DocumentNode : INotifyPropertyChanged
         // 然后遍历子节点
         foreach (var child in Children)
         {
-            if (child.IsFolder)
+            // 递归获取子节点的所有文件
+            foreach (var f in child.GetAllFileNodes())
             {
-                foreach (var f in child.GetAllFileNodes()) yield return f;
-            }
-            else
-            {
-                yield return child;
+                yield return f;
             }
         }
     }
