@@ -8,6 +8,7 @@
         xmlns:models="clr-namespace:CHMGenerator.WPF.Models"
         mc:Ignorable="d"
         Title="CHM Generator - 可视化 CHM 帮助文档生成器"
+        Icon="pack://application:,,,/app.ico"
         Height="600" Width="1200"
         MinHeight="400" MinWidth="800"
         WindowStartupLocation="CenterScreen"
