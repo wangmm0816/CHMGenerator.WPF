@@ -78,8 +78,8 @@ public class ApiHtmlScanner
         var hasScripts = Directory.Exists(Path.Combine(folderPath, "scripts"));
         var htmlCount = Directory.GetFiles(folderPath, "*.html", SearchOption.AllDirectories).Length;
 
-        // 如果有 css 或 scripts 文件夹，且 HTML 文件数量 > 5，判定为 API HTML 目录
-        return (hasCss || hasScripts) && htmlCount > 5;
+        // 如果有 css 或 scripts 文件夹，且至少有 1 个 HTML 文件，判定为 API HTML 目录
+        return (hasCss || hasScripts) && htmlCount > 0;
     }
 
     private class HtmlFileInfo
@@ -360,7 +360,7 @@ public class ApiHtmlScanner
     {
         var ignoredFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "css", "scripts", "images", "fonts"
+            "css", "scripts", "images", "image", "Image", "fonts"
         };
         return ignoredFolders.Contains(folderName);
     }

@@ -517,12 +517,25 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
-        // 子文件夹
+        // 子文件夹（跳过资源文件夹：css, scripts, images, image, Image, fonts）
+        var ignoredFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "css", "scripts", "images", "image", "Image", "fonts"
+        };
+
         foreach (var subDir in Directory.GetDirectories(dir).OrderBy(d => d))
         {
+            var folderName = Path.GetFileName(subDir);
+
+            // 跳过资源文件夹
+            if (ignoredFolders.Contains(folderName))
+            {
+                continue;
+            }
+
             var subFolder = new DocumentNode
             {
-                Title = Path.GetFileName(subDir),
+                Title = folderName,
                 NodeType = NodeType.Folder,
                 Parent = parentNode
             };

@@ -292,7 +292,7 @@ public class ChmProjectGenerator
                         : Path.Combine(srcDir, parentPathPrefix.Replace('/', Path.DirectorySeparatorChar));
 
                     // 查找并复制共享资源目录（css, scripts, images 等）
-                    var sharedDirs = new[] { "css", "scripts", "images", "fonts" };
+                    var sharedDirs = new[] { "css", "scripts", "images", "image", "fonts" };
                     foreach (var sharedDirName in sharedDirs)
                     {
                         var sharedSrcDir = Path.Combine(htmlDir, sharedDirName);
@@ -346,7 +346,7 @@ public class ChmProjectGenerator
                     System.Diagnostics.Debug.WriteLine($"  目标根目录: {targetBaseDir}");
 
                     // 复制共享资源目录到目标根目录
-                    var sharedDirs = new[] { "css", "scripts", "images", "fonts" };
+                    var sharedDirs = new[] { "css", "scripts", "images", "image", "fonts" };
                     foreach (var sharedDirName in sharedDirs)
                     {
                         var sharedSrcDir = Path.Combine(apiHtmlSourceDir, sharedDirName);
