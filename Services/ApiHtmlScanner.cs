@@ -40,24 +40,40 @@ public class ApiHtmlScanner
         // 3. 建立文件夹到入口文件的映射
         var folderEntryMap = BuildFolderEntryMap(apiHtmlDir, allHtmlFiles, fileTitleMap);
 
-        // 4. 为每个 HTML 确定父级
+        // 4. 为每个 HTML 确定父级和其他属性
         var htmlInfoList = new List<HtmlFileInfo>();
         foreach (var htmlFile in allHtmlFiles)
         {
+            var fileDir = Path.GetDirectoryName(htmlFile) ?? "";
+            var relativePath = GetRelativePath(htmlFile, apiHtmlDir);
+            var parentPath = FindParentEntry(htmlFile, apiHtmlDir, folderEntryMap);
+
+            // 判断是否是入口文件（folderEntryMap 中的文件）
+            bool isEntryFile = folderEntryMap.ContainsValue(htmlFile);
+
             var info = new HtmlFileInfo
             {
                 FullPath = htmlFile,
-                RelativePath = GetRelativePath(htmlFile, apiHtmlDir),
+                RelativePath = relativePath,
                 Title = fileTitleMap[htmlFile],
-                ParentPath = FindParentEntry(htmlFile, apiHtmlDir, folderEntryMap)
+                ParentPath = parentPath,
+                Directory = GetRelativePath(fileDir, apiHtmlDir),
+                IsEntryFile = isEntryFile
             };
             htmlInfoList.Add(info);
         }
 
-        // 5. 构建节点树
+        // 5. 排序：按目录 → 非入口文件优先 → 标题
+        htmlInfoList = htmlInfoList
+            .OrderBy(item => item.Directory)
+            .ThenBy(item => item.IsEntryFile ? 1 : 0)
+            .ThenBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // 6. 构建节点树
         var rootNodes = BuildNodeTree(htmlInfoList, apiHtmlDir);
 
-        // 6. 在所有根节点上保存 API HTML 源目录信息
+        // 7. 在所有根节点上保存 API HTML 源目录信息
         foreach (var rootNode in rootNodes)
         {
             rootNode.ApiHtmlSourceDir = apiHtmlDir;
@@ -88,6 +104,8 @@ public class ApiHtmlScanner
         public string RelativePath { get; set; } = "";
         public string Title { get; set; } = "";
         public string ParentPath { get; set; } = "";
+        public string Directory { get; set; } = "";
+        public bool IsEntryFile { get; set; }
     }
 
     /// <summary>
@@ -311,7 +329,7 @@ public class ApiHtmlScanner
     }
 
     /// <summary>
-    /// 构建节点树
+    /// 构建节点树（输入的 htmlInfoList 已经排序好了）
     /// </summary>
     private static List<DocumentNode> BuildNodeTree(List<HtmlFileInfo> htmlInfoList, string apiHtmlDir)
     {
@@ -330,7 +348,7 @@ public class ApiHtmlScanner
             nodeMap[info.RelativePath] = node;
         }
 
-        // 第二遍：建立父子关系
+        // 第二遍：建立父子关系（保持原有顺序）
         foreach (var info in htmlInfoList)
         {
             var node = nodeMap[info.RelativePath];

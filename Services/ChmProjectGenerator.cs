@@ -175,11 +175,79 @@ public class ChmProjectGenerator
                 var apiDestDir = Path.GetDirectoryName(apiDestPath);
                 if (!string.IsNullOrEmpty(apiDestDir)) Directory.CreateDirectory(apiDestDir);
 
-                // 复制 HTML 文件
+                // 复制同目录下的其他文件（如 PDF、图片等），并重命名为安全的文件名
+                var apiSourceDir = Path.GetDirectoryName(apiSourcePath);
+                var fileNameMap = new Dictionary<string, string>(); // 原始文件名 -> 新文件名
+
+                if (!string.IsNullOrEmpty(apiSourceDir) && Directory.Exists(apiSourceDir))
+                {
+                    try
+                    {
+                        // 获取同目录下的所有非 HTML 文件
+                        var siblingFiles = Directory.GetFiles(apiSourceDir)
+                            .Where(f => !f.Equals(apiSourcePath, StringComparison.OrdinalIgnoreCase) &&
+                                       !string.Equals(Path.GetExtension(f), ".html", StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+
+                        int fileIndex = 1;
+                        foreach (var siblingFile in siblingFiles)
+                        {
+                            var siblingFileName = Path.GetFileName(siblingFile);
+                            var extension = Path.GetExtension(siblingFileName);
+                            var baseName = Path.GetFileNameWithoutExtension(siblingFileName);
+                            string targetFileName = siblingFileName;
+
+                            // 检查文件名是否包含非 ASCII 字符（如中文）
+                            if (ContainsNonAscii(siblingFileName))
+                            {
+                                // 生成安全的 ASCII 文件名：保留扩展名，使用序号
+                                targetFileName = $"attachment_{fileIndex:D3}{extension}";
+                                fileNameMap[siblingFileName] = targetFileName;
+                                fileIndex++;
+                                System.Diagnostics.Debug.WriteLine($"  重命名非 ASCII 文件: {siblingFileName} → {targetFileName}");
+                            }
+
+                            var siblingDestPath = Path.Combine(apiDestDir!, targetFileName);
+                            File.Copy(siblingFile, siblingDestPath, overwrite: true);
+                            System.Diagnostics.Debug.WriteLine($"  复制同目录文件: {siblingFile} → {siblingDestPath}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"复制同目录文件失败: {ex.Message}");
+                        // 不抛出异常，继续处理其他文件
+                    }
+                }
+
+                // 复制并修复 HTML 文件中的链接
                 try
                 {
-                    File.Copy(apiSourcePath, apiDestPath, overwrite: true);
-                    System.Diagnostics.Debug.WriteLine($"复制 API HTML 文件: {apiSourcePath} → {apiDestPath}");
+                    if (fileNameMap.Count > 0)
+                    {
+                        // 读取 HTML 内容并替换链接
+                        var htmlContent = File.ReadAllText(apiSourcePath, Encoding.GetEncoding("GB2312"));
+
+                        foreach (var kvp in fileNameMap)
+                        {
+                            var originalName = kvp.Key;
+                            var newName = kvp.Value;
+
+                            // 替换 href="原始文件名" 为 href="新文件名"
+                            htmlContent = htmlContent.Replace($"href=\"{originalName}\"", $"href=\"{newName}\"");
+                            htmlContent = htmlContent.Replace($"href='{originalName}'", $"href='{newName}'");
+
+                            System.Diagnostics.Debug.WriteLine($"  修复 HTML 链接: {originalName} → {newName}");
+                        }
+
+                        File.WriteAllText(apiDestPath, htmlContent, Encoding.GetEncoding("GB2312"));
+                        System.Diagnostics.Debug.WriteLine($"复制并修复 API HTML 文件: {apiSourcePath} → {apiDestPath}");
+                    }
+                    else
+                    {
+                        // 没有需要修复的链接，直接复制
+                        File.Copy(apiSourcePath, apiDestPath, overwrite: true);
+                        System.Diagnostics.Debug.WriteLine($"复制 API HTML 文件: {apiSourcePath} → {apiDestPath}");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -979,6 +1047,14 @@ public class ChmProjectGenerator
         }
         var result = sb.ToString().Trim();
         return string.IsNullOrEmpty(result) ? "untitled" : result;
+    }
+
+    /// <summary>
+    /// 检查字符串是否包含非 ASCII 字符（如中文）
+    /// </summary>
+    private static bool ContainsNonAscii(string text)
+    {
+        return text.Any(c => c > 127);
     }
 
     /// <summary>
