@@ -287,12 +287,15 @@ public class ChmProjectGenerator
                         var docRootDir = Path.Combine(htmlDir, docRootName);
                         if (Directory.Exists(docRootDir))
                         {
-                            // 目标目录：src/{父路径}/{文档根名}
+                            // 安全化目录名，避免 hhc.exe 编译错误
+                            var safeDocRootName = SafeHhcFileName(docRootName);
+
+                            // 目标目录：src/{父路径}/{安全化的文档根名}
                             // 获取节点的父路径
                             var parentPathPrefix = GetNodePathPrefix(node);
                             var destDocRoot = string.IsNullOrEmpty(parentPathPrefix)
-                                ? Path.Combine(srcDir, docRootName)
-                                : Path.Combine(srcDir, parentPathPrefix.Replace('/', Path.DirectorySeparatorChar), docRootName);
+                                ? Path.Combine(srcDir, safeDocRootName)
+                                : Path.Combine(srcDir, parentPathPrefix.Replace('/', Path.DirectorySeparatorChar), safeDocRootName);
 
                             // 递归复制整个文档目录
                             CopyDirectory(docRootDir, destDocRoot);
