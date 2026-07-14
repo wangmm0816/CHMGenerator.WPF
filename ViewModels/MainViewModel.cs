@@ -30,6 +30,11 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _lastChmPath = "";
     [ObservableProperty] private string _logText = "";
 
+    // 路径记忆：分别记住源文件路径和输出路径
+    private string _lastSourceFilePath = "";
+    private string _lastSourceFolderPath = "";
+    private string _lastOutputPath = "";
+
     // 监听 StatusText 变化，自动记录到日志
     partial void OnStatusTextChanged(string value)
     {
@@ -393,7 +398,19 @@ public partial class MainViewModel : ObservableObject
             Multiselect = true
         };
 
+        // 恢复上次选择文件的路径
+        if (!string.IsNullOrEmpty(_lastSourceFilePath) && Directory.Exists(Path.GetDirectoryName(_lastSourceFilePath)))
+        {
+            dlg.InitialDirectory = Path.GetDirectoryName(_lastSourceFilePath);
+        }
+
         if (dlg.ShowDialog() != true) return;
+
+        // 记住这次选择的路径
+        if (dlg.FileNames.Length > 0)
+        {
+            _lastSourceFilePath = dlg.FileNames[0];
+        }
 
         // 根据当前选中节点决定添加到哪个文件夹下
         var targetFolder = GetTargetFolderForAdd();
@@ -435,9 +452,18 @@ public partial class MainViewModel : ObservableObject
             Title = "选择包含 HTML 文件的文件夹"
         };
 
+        // 恢复上次选择文件夹的路径
+        if (!string.IsNullOrEmpty(_lastSourceFolderPath) && Directory.Exists(_lastSourceFolderPath))
+        {
+            dlg.InitialDirectory = _lastSourceFolderPath;
+        }
+
         if (dlg.ShowDialog() != true) return;
 
         var folderPath = dlg.FolderName;
+
+        // 记住这次选择的路径
+        _lastSourceFolderPath = Path.GetDirectoryName(folderPath) ?? folderPath;
         var folderName = Path.GetFileName(folderPath);
 
         // 根据当前选中决定父节点
@@ -684,9 +710,19 @@ public partial class MainViewModel : ObservableObject
 
         // 选择父目录，然后基于项目标题创建新文件夹
         var dlg = new OpenFolderDialog { Title = "选择 CHM 项目存放位置" };
+
+        // 恢复上次输出的路径
+        if (!string.IsNullOrEmpty(_lastOutputPath) && Directory.Exists(_lastOutputPath))
+        {
+            dlg.InitialDirectory = _lastOutputPath;
+        }
+
         if (dlg.ShowDialog() != true) return;
 
         var parentDir = dlg.FolderName;
+
+        // 记住这次输出的路径
+        _lastOutputPath = parentDir;
 
         // 生成安全的文件夹名（去除非法字符）
         var safeFolderName = SanitizeFolderName(ProjectTitle);
