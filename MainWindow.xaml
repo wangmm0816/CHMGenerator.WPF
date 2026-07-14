@@ -119,17 +119,17 @@
                 <Button Grid.Column="5" Style="{StaticResource PrimaryButton}"
                         Command="{Binding GenerateChmCommand}"
                         IsEnabled="{Binding IsBusy, Converter={x:Static helpers:InverseBooleanConverter.Instance}}"
-                        Margin="10,0,0,0" Padding="20,8">
+                        Margin="12,0,4,0" Padding="16,6">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="🔨" Margin="0,0,8,0"/>
-                        <TextBlock Text="生成 CHM" FontWeight="SemiBold"/>
+                        <TextBlock Text="🔨" Margin="0,0,4,0"/>
+                        <TextBlock Text="生成 CHM"/>
                     </StackPanel>
                 </Button>
 
                 <Button Grid.Column="6" Style="{StaticResource ToolbarButton}"
                         Click="Settings_Click"
                         ToolTip="外部工具配置（Python doc2html / CHMGenerator）"
-                        Margin="0,0,8,0">
+                        Margin="0,0,4,0">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="⚙" Margin="0,0,4,0"/>
                         <TextBlock Text="设置"/>
@@ -139,7 +139,7 @@
                 <Button Grid.Column="7" Style="{StaticResource ToolbarButton}"
                         Command="{Binding LocateHhcCommand}"
                         ToolTip="手动指定 hhc.exe 位置"
-                        Margin="0,0,0,0">
+                        Margin="0,0,4,0">
                     <TextBlock Text="🔧"/>
                 </Button>
             </Grid>
