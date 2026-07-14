@@ -417,14 +417,31 @@ public partial class MainViewModel : ObservableObject
 
         LogManager.Instance.WriteOperation($"添加文件: {dlg.FileNames.Length} 个文件");
 
+        DocumentNode? firstAddedNode = null;
         foreach (var file in dlg.FileNames)
         {
-            AddFileToNode(file, targetFolder);
+            var node = CreateFileNode(file, targetFolder);
+            if (targetFolder == null)
+            {
+                RootNodes.Add(node);
+            }
+            else
+            {
+                targetFolder.Children.Add(node);
+            }
+
+            firstAddedNode ??= node; // 记住第一个添加的节点
             LogManager.Instance.WriteOperation($"  - {Path.GetFileName(file)}");
         }
 
         // 展开目标文件夹，让用户看到刚加入的文件
         if (targetFolder != null) targetFolder.IsExpanded = true;
+
+        // 自动选中第一个添加的节点
+        if (firstAddedNode != null)
+        {
+            SelectedNode = firstAddedNode;
+        }
 
         RefreshPreview();
         StatusText = targetFolder == null
@@ -491,6 +508,12 @@ public partial class MainViewModel : ObservableObject
             if (targetFolder != null)
             {
                 targetFolder.IsExpanded = true;
+            }
+
+            // 自动选中第一个添加的节点
+            if (scannedNodes.Count > 0)
+            {
+                SelectedNode = scannedNodes[0];
             }
 
             RefreshPreview();
