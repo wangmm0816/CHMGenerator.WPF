@@ -632,6 +632,50 @@ public partial class MainViewModel : ObservableObject
         return node;
     }
 
+    /// <summary>
+    /// 刷新所有节点的 title，从磁盘重新读取最新内容
+    /// </summary>
+    private void RefreshAllNodeTitles()
+    {
+        foreach (var rootNode in RootNodes)
+        {
+            RefreshNodeTitle(rootNode);
+        }
+        RefreshPreview();
+    }
+
+    /// <summary>
+    /// 递归刷新节点及其子节点的 title
+    /// </summary>
+    private void RefreshNodeTitle(DocumentNode node)
+    {
+        // 只刷新 HTML 和 API HTML 节点
+        if (node.NodeType == NodeType.Html && !string.IsNullOrEmpty(node.SourcePath) && File.Exists(node.SourcePath))
+        {
+            var title = HtmlTitleExtractor.Extract(node.SourcePath);
+            if (!string.IsNullOrEmpty(title))
+            {
+                node.Title = title;
+                node.OriginalTitle = title;
+            }
+        }
+        else if (node.NodeType == NodeType.ApiHtml && !string.IsNullOrEmpty(node.SourcePath) && File.Exists(node.SourcePath))
+        {
+            // API HTML 也可能需要刷新 title
+            var title = HtmlTitleExtractor.Extract(node.SourcePath);
+            if (!string.IsNullOrEmpty(title))
+            {
+                node.Title = title;
+            }
+        }
+
+        // 递归处理子节点
+        foreach (var child in node.Children)
+        {
+            RefreshNodeTitle(child);
+        }
+    }
+
     [RelayCommand]
     private void AddNewFolder()
     {
@@ -730,6 +774,10 @@ public partial class MainViewModel : ObservableObject
             MessageBox.Show("请先添加文件或文件夹", "提示");
             return;
         }
+
+        // 生成前刷新所有节点的信息，确保获取到最新的文件内容
+        StatusText = "正在刷新文档信息...";
+        RefreshAllNodeTitles();
 
         // 选择父目录，然后基于项目标题创建新文件夹
         var dlg = new OpenFolderDialog { Title = "选择 CHM 项目存放位置" };
