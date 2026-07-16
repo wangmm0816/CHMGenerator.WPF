@@ -331,11 +331,28 @@ public class ChmProjectGenerator
             var destDir = Path.GetDirectoryName(destPath);
             if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
 
-            // 复制 HTML 文件
+            // 复制 HTML 文件并修正 title 中的实体编码
             try
             {
-                File.Copy(sourcePath, destPath, overwrite: true);
-                System.Diagnostics.Debug.WriteLine($"复制文件: {sourcePath} → {destPath}");
+                // 读取 HTML 内容
+                var htmlContent = File.ReadAllText(sourcePath, Encoding.GetEncoding("GB2312"));
+
+                // 查找并解码 title 标签中的实体编码
+                htmlContent = System.Text.RegularExpressions.Regex.Replace(
+                    htmlContent,
+                    @"<title\b[^>]*>(.*?)</title>",
+                    match =>
+                    {
+                        var titleContent = match.Groups[1].Value;
+                        var decodedTitle = System.Net.WebUtility.HtmlDecode(titleContent);
+                        return $"<title>{decodedTitle}</title>";
+                    },
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline
+                );
+
+                // 写入目标文件
+                File.WriteAllText(destPath, htmlContent, Encoding.GetEncoding("GB2312"));
+                System.Diagnostics.Debug.WriteLine($"复制并修正文件: {sourcePath} → {destPath}");
             }
             catch (Exception ex)
             {
@@ -546,7 +563,43 @@ public class ChmProjectGenerator
         foreach (var file in Directory.GetFiles(sourceDir))
         {
             var destFile = Path.Combine(destDir, Path.GetFileName(file));
-            File.Copy(file, destFile, overwrite: true);
+            var extension = Path.GetExtension(file).ToLowerInvariant();
+
+            // 对 HTML 文件特殊处理：解码 title 中的实体编码
+            if (extension == ".html" || extension == ".htm")
+            {
+                try
+                {
+                    // 读取 HTML 内容
+                    var htmlContent = File.ReadAllText(file, Encoding.GetEncoding("GB2312"));
+
+                    // 查找并解码 title 标签中的实体编码
+                    htmlContent = System.Text.RegularExpressions.Regex.Replace(
+                        htmlContent,
+                        @"<title\b[^>]*>(.*?)</title>",
+                        match =>
+                        {
+                            var titleContent = match.Groups[1].Value;
+                            var decodedTitle = System.Net.WebUtility.HtmlDecode(titleContent);
+                            return $"<title>{decodedTitle}</title>";
+                        },
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline
+                    );
+
+                    // 写入目标文件
+                    File.WriteAllText(destFile, htmlContent, Encoding.GetEncoding("GB2312"));
+                }
+                catch
+                {
+                    // 如果处理失败，直接复制
+                    File.Copy(file, destFile, overwrite: true);
+                }
+            }
+            else
+            {
+                // 非 HTML 文件直接复制
+                File.Copy(file, destFile, overwrite: true);
+            }
         }
 
         foreach (var dir in Directory.GetDirectories(sourceDir))
@@ -1033,11 +1086,12 @@ public class ChmProjectGenerator
     private static string EscapeXml(string text)
     {
         if (string.IsNullOrEmpty(text)) return text;
-        return text.Replace("&", "&amp;")
-                   .Replace("<", "&lt;")
+
+        // CHM 的 .hhc 文件中，param value 属性中的 & 不需要转义为 &amp;
+        // 只需要转义会破坏 XML 结构的字符
+        return text.Replace("<", "&lt;")
                    .Replace(">", "&gt;")
-                   .Replace("\"", "&quot;")
-                   .Replace("'", "&apos;");
+                   .Replace("\"", "&quot;");
     }
 
     private static string SanitizeFileName(string name)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using CHMGenerator.WPF.Models;
@@ -186,6 +187,10 @@ public class ApiHtmlScanner
                     if (match.Success)
                     {
                         var title = match.Groups[1].Value.Trim();
+
+                        // 解码 HTML 实体（如 &amp; &nbsp; &lt; 等）
+                        title = WebUtility.HtmlDecode(title);
+
                         // 检查是否有乱码（包含大量问号或方框字符）
                         if (!string.IsNullOrEmpty(title) && !title.Contains("�") && title.Length > 0)
                         {

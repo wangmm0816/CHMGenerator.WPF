@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -60,12 +61,12 @@ public static class HtmlTitleExtractor
         if (!match.Success) return string.Empty;
 
         var title = match.Groups[1].Value;
-        title = Regex.Replace(title, @"&nbsp;", " ");
-        title = Regex.Replace(title, @"&lt;", "<");
-        title = Regex.Replace(title, @"&gt;", ">");
-        title = Regex.Replace(title, @"&amp;", "&");
-        title = Regex.Replace(title, @"&quot;", "\"");
-        title = Regex.Replace(title, @"&#39;", "'");
+
+        // 使用 WebUtility.HtmlDecode 解码所有 HTML 实体
+        // 支持常见的如 &nbsp; &lt; &gt; &amp; &quot; &#39; 以及数字实体如 &#160; &#60; 等
+        title = WebUtility.HtmlDecode(title);
+
+        // 规范化空白字符
         title = Regex.Replace(title, @"\s+", " ").Trim();
 
         return title;
