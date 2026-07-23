@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.Versioning;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace CHMGenerator.WPF.Services;
 
@@ -139,6 +140,53 @@ public class ChmProjectGenerator
         // 记录所有 API HTML 源目录（用于复制 css/scripts）
         var apiHtmlSourceDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        // 为每个 API HTML 源目录建立全局的文件名映射表（原始文件名 -> 安全化文件名）
+        // key: API HTML 源目录路径, value: 文件名映射字典
+        var globalHtmlFileNameMaps = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+
+        // 第一遍：收集所有 API HTML 源目录，并建立全局文件名映射
+        foreach (var node in rootNodes.SelectMany(r => r.GetAllFileNodes()))
+        {
+            if (node.NodeType == Models.NodeType.ApiHtml && !string.IsNullOrEmpty(node.SourcePath))
+            {
+                // 查找 ApiHtmlSourceDir
+                string? apiHtmlSourceDir = node.ApiHtmlSourceDir;
+                if (string.IsNullOrEmpty(apiHtmlSourceDir))
+                {
+                    var ancestor = node.Parent;
+                    while (ancestor != null && string.IsNullOrEmpty(apiHtmlSourceDir))
+                    {
+                        apiHtmlSourceDir = ancestor.ApiHtmlSourceDir;
+                        ancestor = ancestor.Parent;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(apiHtmlSourceDir) && !globalHtmlFileNameMaps.ContainsKey(apiHtmlSourceDir))
+                {
+                    apiHtmlSourceDirs.Add(apiHtmlSourceDir);
+
+                    // 扫描整个源目录树，建立文件名映射
+                    var fileNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    var allHtmlFiles = Directory.GetFiles(apiHtmlSourceDir, "*.html", SearchOption.AllDirectories);
+
+                    foreach (var htmlFile in allHtmlFiles)
+                    {
+                        var originalFileName = Path.GetFileName(htmlFile);
+                        var safeFileName = SafeHhcFileName(originalFileName);
+
+                        if (!originalFileName.Equals(safeFileName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            fileNameMap[originalFileName] = safeFileName;
+                            System.Diagnostics.Debug.WriteLine($"[全局映射] {apiHtmlSourceDir}: {originalFileName} → {safeFileName}");
+                        }
+                    }
+
+                    globalHtmlFileNameMaps[apiHtmlSourceDir] = fileNameMap;
+                }
+            }
+        }
+
+        // 第二遍：复制文件并修复链接
         foreach (var node in rootNodes.SelectMany(r => r.GetAllFileNodes()))
         {
             // API HTML 节点：复制单个文件，记录源目录
@@ -164,9 +212,11 @@ public class ChmProjectGenerator
                     }
                 }
 
-                if (!string.IsNullOrEmpty(apiHtmlSourceDir))
+                // 获取该源目录的全局 HTML 文件名映射表
+                Dictionary<string, string>? htmlFileNameMap = null;
+                if (!string.IsNullOrEmpty(apiHtmlSourceDir) && globalHtmlFileNameMaps.ContainsKey(apiHtmlSourceDir))
                 {
-                    apiHtmlSourceDirs.Add(apiHtmlSourceDir);
+                    htmlFileNameMap = globalHtmlFileNameMaps[apiHtmlSourceDir];
                 }
 
                 // 计算目标路径
@@ -177,7 +227,7 @@ public class ChmProjectGenerator
 
                 // 复制同目录下的其他文件（如 PDF、图片等），并重命名为安全的文件名
                 var apiSourceDir = Path.GetDirectoryName(apiSourcePath);
-                var fileNameMap = new Dictionary<string, string>(); // 原始文件名 -> 新文件名
+                var fileNameMap = new Dictionary<string, string>(); // 原始文件名 -> 新文件名（用于 PDF 等附件）
 
                 if (!string.IsNullOrEmpty(apiSourceDir) && Directory.Exists(apiSourceDir))
                 {
@@ -219,14 +269,56 @@ public class ChmProjectGenerator
                     }
                 }
 
-                // 复制并修复 HTML 文件中的链接
+                // 复制并修复 HTML 文件（解码 title 实体编码，修复文件链接）
                 try
                 {
+                    // 读取 HTML 内容
+                    var htmlContent = File.ReadAllText(apiSourcePath, Encoding.GetEncoding("GB2312"));
+
+                    // 解码 title 标签中的实体编码
+                    htmlContent = System.Text.RegularExpressions.Regex.Replace(
+                        htmlContent,
+                        @"<title\b[^>]*>(.*?)</title>",
+                        match =>
+                        {
+                            var titleContent = match.Groups[1].Value;
+                            var decodedTitle = System.Net.WebUtility.HtmlDecode(titleContent);
+                            return $"<title>{decodedTitle}</title>";
+                        },
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline
+                    );
+
+                    // 修复 HTML 内部链接（同目录的 HTML 文件和 PDF 等附件）
+                    // 1. 修复指向同目录其他 HTML 文件的链接
+                    if (htmlFileNameMap.Count > 0)
+                    {
+                        foreach (var kvp in htmlFileNameMap)
+                        {
+                            var originalName = kvp.Key;
+                            var safeFileName = kvp.Value;
+
+                            // 处理各种可能的路径形式：
+                            // - 相对路径：BitSequence/SiteBitSequence.BitSequence.03.021.html
+                            // - 当前目录：SiteBitSequence.BitSequence.03.021.html
+                            // - 带目录：SubDir/SiteBitSequence.BitSequence.03.021.html
+
+                            // 替换所有出现的原始文件名（包括可能的路径前缀）
+                            // 使用正则表达式确保只替换文件名部分
+                            var pattern = $@"(href\s*=\s*[""'])([^""']*/)?" + Regex.Escape(originalName) + @"([""'])";
+                            htmlContent = Regex.Replace(
+                                htmlContent,
+                                pattern,
+                                m => $"{m.Groups[1].Value}{m.Groups[2].Value}{safeFileName}{m.Groups[3].Value}",
+                                RegexOptions.IgnoreCase
+                            );
+
+                            System.Diagnostics.Debug.WriteLine($"  修复 HTML 文件链接: {originalName} → {safeFileName}");
+                        }
+                    }
+
+                    // 2. 修复指向 PDF 等附件文件的链接
                     if (fileNameMap.Count > 0)
                     {
-                        // 读取 HTML 内容并替换链接
-                        var htmlContent = File.ReadAllText(apiSourcePath, Encoding.GetEncoding("GB2312"));
-
                         foreach (var kvp in fileNameMap)
                         {
                             var originalName = kvp.Key;
@@ -238,16 +330,11 @@ public class ChmProjectGenerator
 
                             System.Diagnostics.Debug.WriteLine($"  修复 HTML 链接: {originalName} → {newName}");
                         }
+                    }
 
-                        File.WriteAllText(apiDestPath, htmlContent, Encoding.GetEncoding("GB2312"));
-                        System.Diagnostics.Debug.WriteLine($"复制并修复 API HTML 文件: {apiSourcePath} → {apiDestPath}");
-                    }
-                    else
-                    {
-                        // 没有需要修复的链接，直接复制
-                        File.Copy(apiSourcePath, apiDestPath, overwrite: true);
-                        System.Diagnostics.Debug.WriteLine($"复制 API HTML 文件: {apiSourcePath} → {apiDestPath}");
-                    }
+                    // 写入目标文件
+                    File.WriteAllText(apiDestPath, htmlContent, Encoding.GetEncoding("GB2312"));
+                    System.Diagnostics.Debug.WriteLine($"复制并修复 API HTML 文件: {apiSourcePath} → {apiDestPath}");
                 }
                 catch (Exception ex)
                 {
@@ -297,8 +384,23 @@ public class ChmProjectGenerator
                                 ? Path.Combine(srcDir, safeDocRootName)
                                 : Path.Combine(srcDir, parentPathPrefix.Replace('/', Path.DirectorySeparatorChar), safeDocRootName);
 
-                            // 递归复制整个文档目录
-                            CopyDirectory(docRootDir, destDocRoot);
+                            // 为 Word HTML 目录建立文件名映射
+                            var wordHtmlFileNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                            var wordHtmlFiles = Directory.GetFiles(docRootDir, "*.html", SearchOption.AllDirectories);
+                            foreach (var htmlFile in wordHtmlFiles)
+                            {
+                                var originalFileName = Path.GetFileName(htmlFile);
+                                var safeFileName = SafeHhcFileName(originalFileName);
+
+                                if (!originalFileName.Equals(safeFileName, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    wordHtmlFileNameMap[originalFileName] = safeFileName;
+                                    System.Diagnostics.Debug.WriteLine($"[Word HTML 映射] {originalFileName} → {safeFileName}");
+                                }
+                            }
+
+                            // 递归复制整个文档目录，并修复 HTML 链接
+                            CopyDirectory(docRootDir, destDocRoot, wordHtmlFileNameMap);
                             System.Diagnostics.Debug.WriteLine($"复制 Python 文档目录: {docRootDir} → {destDocRoot}");
 
                             // 记录 html 根目录，用于后续复制共享资源
@@ -556,7 +658,7 @@ public class ChmProjectGenerator
     /// <summary>
     /// 递归复制目录
     /// </summary>
-    private static void CopyDirectory(string sourceDir, string destDir)
+    private static void CopyDirectory(string sourceDir, string destDir, Dictionary<string, string>? htmlFileNameMap = null)
     {
         Directory.CreateDirectory(destDir);
 
@@ -565,7 +667,7 @@ public class ChmProjectGenerator
             var destFile = Path.Combine(destDir, Path.GetFileName(file));
             var extension = Path.GetExtension(file).ToLowerInvariant();
 
-            // 对 HTML 文件特殊处理：解码 title 中的实体编码
+            // 对 HTML 文件特殊处理：解码 title 中的实体编码，修复内部链接
             if (extension == ".html" || extension == ".htm")
             {
                 try
@@ -586,6 +688,25 @@ public class ChmProjectGenerator
                         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline
                     );
 
+                    // 修复 HTML 内部链接（如果提供了文件名映射）
+                    if (htmlFileNameMap != null && htmlFileNameMap.Count > 0)
+                    {
+                        foreach (var kvp in htmlFileNameMap)
+                        {
+                            var originalName = kvp.Key;
+                            var safeFileName = kvp.Value;
+
+                            // 替换所有出现的原始文件名
+                            var pattern = $@"(href\s*=\s*[""'])([^""']*/)?" + Regex.Escape(originalName) + @"([""'])";
+                            htmlContent = Regex.Replace(
+                                htmlContent,
+                                pattern,
+                                m => $"{m.Groups[1].Value}{m.Groups[2].Value}{safeFileName}{m.Groups[3].Value}",
+                                RegexOptions.IgnoreCase
+                            );
+                        }
+                    }
+
                     // 写入目标文件
                     File.WriteAllText(destFile, htmlContent, Encoding.GetEncoding("GB2312"));
                 }
@@ -605,7 +726,7 @@ public class ChmProjectGenerator
         foreach (var dir in Directory.GetDirectories(sourceDir))
         {
             var destSubDir = Path.Combine(destDir, Path.GetFileName(dir));
-            CopyDirectory(dir, destSubDir);
+            CopyDirectory(dir, destSubDir, htmlFileNameMap);
         }
     }
 
@@ -1087,9 +1208,14 @@ public class ChmProjectGenerator
     {
         if (string.IsNullOrEmpty(text)) return text;
 
-        // CHM 的 .hhc 文件中，param value 属性中的 & 不需要转义为 &amp;
-        // 只需要转义会破坏 XML 结构的字符
-        return text.Replace("<", "&lt;")
+        // 先解码可能存在的 HTML 实体（避免双重编码）
+        // 例如：title 中如果已经是 &amp; 就解码为 &，然后再编码为 &amp;
+        text = System.Net.WebUtility.HtmlDecode(text);
+
+        // .hhc 文件是标准 XML 格式，必须转义 & < > " 字符
+        // 注意：必须先转义 &，否则会把后续转义产生的 & 再次转义
+        return text.Replace("&", "&amp;")
+                   .Replace("<", "&lt;")
                    .Replace(">", "&gt;")
                    .Replace("\"", "&quot;");
     }
@@ -1196,7 +1322,8 @@ public class ChmProjectGenerator
         {
             parts[i] = SafeHhcFileName(parts[i]);
         }
-        return string.Join("/", parts);
+        // CHM 的 .hhc 文件要求使用反斜杠 \ 作为路径分隔符
+        return string.Join("\\", parts);
     }
 }
 
