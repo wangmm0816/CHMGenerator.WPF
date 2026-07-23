@@ -1278,15 +1278,51 @@ public class ChmProjectGenerator
     ///   - & + 等特殊字符      ← URL/path 解析问题
     /// 保留：中文字符、字母数字、下划线、连字符、单个点
     /// </summary>
+    // 缓存安全化文件名的结果，避免重复计算
+    private static readonly Dictionary<string, string> _safeFileNameCache = new Dictionary<string, string>(StringComparer.Ordinal);
+
     private static string SafeHhcFileName(string name)
     {
         if (string.IsNullOrEmpty(name)) return "untitled";
 
-        // 找到最后一个点的位置（作为扩展名分隔符保留）
-        // 修复 v2.5 的 Bug：之前只保留第一个点，导致 .html 的点被替换成下划线
-        int lastDotIndex = name.LastIndexOf('.');
+        // 检查缓存
+        if (_safeFileNameCache.TryGetValue(name, out var cached))
+        {
+            return cached;
+        }
 
-        var sb = new StringBuilder();
+        // 快速检查：如果文件名已经是安全的，直接返回
+        int lastDotIndex = name.LastIndexOf('.');
+        bool needsSanitization = false;
+
+        for (int i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (c == '.' && i != lastDotIndex && lastDotIndex > 0)
+            {
+                needsSanitization = true;
+                break;
+            }
+            if (c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}' ||
+                char.IsWhiteSpace(c) ||
+                c == '&' || c == '+' || c == '#' || c == '%' || c == '!' || c == '@' ||
+                c == '$' || c == '^' || c == '*' || c == '|' || c == ';' || c == ',' ||
+                c == '\'' || c == '"' || c == '<' || c == '>' || c == '?' || c == '`' || c == '=')
+            {
+                needsSanitization = true;
+                break;
+            }
+        }
+
+        // 如果不需要安全化，直接返回并缓存
+        if (!needsSanitization)
+        {
+            _safeFileNameCache[name] = name;
+            return name;
+        }
+
+        // 需要安全化：逐字符处理
+        var sb = new StringBuilder(name.Length);
         for (int i = 0; i < name.Length; i++)
         {
             var c = name[i];
@@ -1337,7 +1373,14 @@ public class ChmProjectGenerator
         }
         result = result.Trim('_');
 
-        return string.IsNullOrEmpty(result) ? "untitled" : result;
+        if (string.IsNullOrEmpty(result))
+        {
+            result = "untitled";
+        }
+
+        // 缓存结果
+        _safeFileNameCache[name] = result;
+        return result;
     }
 
     /// <summary>
