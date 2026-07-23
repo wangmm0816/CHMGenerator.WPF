@@ -144,7 +144,10 @@ public class ChmProjectGenerator
         // key: API HTML 源目录路径, value: 文件名映射字典
         var globalHtmlFileNameMaps = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
 
-        // 第一遍：收集所有 API HTML 源目录，并建立全局文件名映射
+        // 缓存已扫描的源目录及其所有文件列表，避免重复扫描
+        var sourceDirectoryCache = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        // 单次遍历：收集所有 API HTML 源目录并建立全局文件名映射
         foreach (var node in rootNodes.SelectMany(r => r.GetAllFileNodes()))
         {
             if (node.NodeType == Models.NodeType.ApiHtml && !string.IsNullOrEmpty(node.SourcePath))
@@ -165,10 +168,20 @@ public class ChmProjectGenerator
                 {
                     apiHtmlSourceDirs.Add(apiHtmlSourceDir);
 
-                    // 扫描整个源目录树，建立文件名映射
-                    var fileNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    var allHtmlFiles = Directory.GetFiles(apiHtmlSourceDir, "*.html", SearchOption.AllDirectories);
+                    // 扫描整个源目录树，建立文件名映射（只扫描一次并缓存）
+                    List<string> allHtmlFiles;
+                    if (sourceDirectoryCache.ContainsKey(apiHtmlSourceDir))
+                    {
+                        allHtmlFiles = sourceDirectoryCache[apiHtmlSourceDir];
+                    }
+                    else
+                    {
+                        allHtmlFiles = Directory.GetFiles(apiHtmlSourceDir, "*.html", SearchOption.AllDirectories).ToList();
+                        sourceDirectoryCache[apiHtmlSourceDir] = allHtmlFiles;
+                        System.Diagnostics.Debug.WriteLine($"[目录扫描] {apiHtmlSourceDir}: 找到 {allHtmlFiles.Count} 个 HTML 文件");
+                    }
 
+                    var fileNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var htmlFile in allHtmlFiles)
                     {
                         var originalFileName = Path.GetFileName(htmlFile);
@@ -177,16 +190,16 @@ public class ChmProjectGenerator
                         if (!originalFileName.Equals(safeFileName, StringComparison.OrdinalIgnoreCase))
                         {
                             fileNameMap[originalFileName] = safeFileName;
-                            System.Diagnostics.Debug.WriteLine($"[全局映射] {apiHtmlSourceDir}: {originalFileName} → {safeFileName}");
                         }
                     }
 
                     globalHtmlFileNameMaps[apiHtmlSourceDir] = fileNameMap;
+                    System.Diagnostics.Debug.WriteLine($"[全局映射] {apiHtmlSourceDir}: {fileNameMap.Count} 个文件需要重命名");
                 }
             }
         }
 
-        // 第二遍：复制文件并修复链接
+        // 复制文件并修复链接
         foreach (var node in rootNodes.SelectMany(r => r.GetAllFileNodes()))
         {
             // API HTML 节点：复制单个文件，记录源目录
@@ -384,9 +397,21 @@ public class ChmProjectGenerator
                                 ? Path.Combine(srcDir, safeDocRootName)
                                 : Path.Combine(srcDir, parentPathPrefix.Replace('/', Path.DirectorySeparatorChar), safeDocRootName);
 
-                            // 为 Word HTML 目录建立文件名映射
+                            // 为 Word HTML 目录建立文件名映射（使用缓存）
                             var wordHtmlFileNameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                            var wordHtmlFiles = Directory.GetFiles(docRootDir, "*.html", SearchOption.AllDirectories);
+                            List<string> wordHtmlFiles;
+
+                            if (sourceDirectoryCache.ContainsKey(docRootDir))
+                            {
+                                wordHtmlFiles = sourceDirectoryCache[docRootDir];
+                            }
+                            else
+                            {
+                                wordHtmlFiles = Directory.GetFiles(docRootDir, "*.html", SearchOption.AllDirectories).ToList();
+                                sourceDirectoryCache[docRootDir] = wordHtmlFiles;
+                                System.Diagnostics.Debug.WriteLine($"[目录扫描] Word HTML: {docRootDir}: 找到 {wordHtmlFiles.Count} 个文件");
+                            }
+
                             foreach (var htmlFile in wordHtmlFiles)
                             {
                                 var originalFileName = Path.GetFileName(htmlFile);
@@ -395,8 +420,12 @@ public class ChmProjectGenerator
                                 if (!originalFileName.Equals(safeFileName, StringComparison.OrdinalIgnoreCase))
                                 {
                                     wordHtmlFileNameMap[originalFileName] = safeFileName;
-                                    System.Diagnostics.Debug.WriteLine($"[Word HTML 映射] {originalFileName} → {safeFileName}");
                                 }
+                            }
+
+                            if (wordHtmlFileNameMap.Count > 0)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[Word HTML 映射] {docRootDir}: {wordHtmlFileNameMap.Count} 个文件需要重命名");
                             }
 
                             // 递归复制整个文档目录，并修复 HTML 链接

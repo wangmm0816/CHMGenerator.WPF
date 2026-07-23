@@ -633,14 +633,19 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 刷新所有节点的 title，从磁盘重新读取最新内容
+    /// 异步刷新所有节点的 title，从磁盘重新读取最新内容
     /// </summary>
-    private void RefreshAllNodeTitles()
+    private async Task RefreshAllNodeTitlesAsync()
     {
-        foreach (var rootNode in RootNodes)
+        await Task.Run(() =>
         {
-            RefreshNodeTitle(rootNode);
-        }
+            foreach (var rootNode in RootNodes)
+            {
+                RefreshNodeTitle(rootNode);
+            }
+        });
+
+        // 回到 UI 线程刷新预览
         RefreshPreview();
     }
 
@@ -777,7 +782,7 @@ public partial class MainViewModel : ObservableObject
 
         // 生成前刷新所有节点的信息，确保获取到最新的文件内容
         StatusText = "正在刷新文档信息...";
-        RefreshAllNodeTitles();
+        await RefreshAllNodeTitlesAsync();
 
         // 选择父目录，然后基于项目标题创建新文件夹
         var dlg = new OpenFolderDialog { Title = "选择 CHM 项目存放位置" };
