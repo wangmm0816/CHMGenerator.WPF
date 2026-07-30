@@ -82,10 +82,6 @@ public static class HhcLocator
 public partial class ChmProjectGenerator
 {
     /// <summary>
-    /// 使用新的重构版本的文件复制逻辑（测试开关）
-    /// </summary>
-    public static bool UseRefactoredLogic { get; set; } = true;
-    /// <summary>
     /// 生成全部工程文件到指定目录
     /// </summary>
     /// <param name="outputDir">输出目录（src 上一级）</param>
@@ -103,16 +99,7 @@ public partial class ChmProjectGenerator
         Dictionary<Models.DocumentNode, string>? wordNodeTxtMap = null)
     {
         // 把所有文件复制到 src/ 下，按 RelativePath 摆放
-        if (UseRefactoredLogic)
-        {
-            System.Diagnostics.Debug.WriteLine("使用新的重构版本逻辑");
-            CopyFilesToSrc_Refactored(srcDir, rootNodes);
-        }
-        else
-        {
-            System.Diagnostics.Debug.WriteLine("使用原始逻辑");
-            CopyFilesToSrc(srcDir, rootNodes);
-        }
+        CopyFilesToSrc_Refactored(srcDir, rootNodes);
 
         // 将 .hhp/.hhc/.hhk 生成到 src 目录中，这样 hhc.exe 可以在 src 目录中找到所有文件
         var hhpPath = Path.Combine(srcDir, "project.hhp");
@@ -138,12 +125,10 @@ public partial class ChmProjectGenerator
     }
 
     /// <summary>
-    /// 将文档节点的文件复制到 src 目录，按照节点的 RelativePath 组织目录结构
-    /// 对于 Word 节点，复制整个 Python 生成的目录结构
-    /// 对于 API HTML 节点，复制单个文件并记录源目录用于复制共享资源
-    /// 对于普通 HTML 文件，复制单个文件
+    /// 旧的文件复制逻辑（已废弃，保留用于参考）
     /// </summary>
-    private void CopyFilesToSrc(string srcDir, IReadOnlyList<Models.DocumentNode> rootNodes)
+    [Obsolete("已由 CopyFilesToSrc_Refactored 替代")]
+    private void CopyFilesToSrc_Old(string srcDir, IReadOnlyList<Models.DocumentNode> rootNodes)
     {
         if (!Directory.Exists(srcDir)) Directory.CreateDirectory(srcDir);
 
