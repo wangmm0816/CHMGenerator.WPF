@@ -391,6 +391,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void AddFiles()
     {
+        _hasWarnedAboutProblematicChars = false;
         var dlg = new OpenFileDialog
         {
             Title = "选择 HTML / Word 文件",
@@ -420,6 +421,7 @@ public partial class MainViewModel : ObservableObject
         DocumentNode? firstAddedNode = null;
         foreach (var file in dlg.FileNames)
         {
+            // 统一通过 AddFileToNode 添加，包含特殊字符检查
             var node = CreateFileNode(file, targetFolder);
             if (targetFolder == null)
             {
@@ -429,6 +431,9 @@ public partial class MainViewModel : ObservableObject
             {
                 targetFolder.Children.Add(node);
             }
+
+            // 检查 Word 名称是否包含特殊字符
+            CheckWordFileForProblematicChars(node);
 
             firstAddedNode ??= node; // 记住第一个添加的节点
             LogManager.Instance.WriteOperation($"  - {Path.GetFileName(file)}");
@@ -464,6 +469,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void AddFolder()
     {
+        _hasWarnedAboutProblematicChars = false;
         var dlg = new OpenFolderDialog
         {
             Title = "选择包含 HTML 文件的文件夹"
@@ -604,7 +610,32 @@ public partial class MainViewModel : ObservableObject
         {
             parent.Children.Add(node);
         }
+
+        CheckWordFileForProblematicChars(node);
     }
+
+    /// <summary>
+    /// 检查 Word 文件名称/标题是否包含 CHM 不兼容的特殊字符
+    /// </summary>
+    private void CheckWordFileForProblematicChars(DocumentNode node)
+    {
+        if (node.NodeType != NodeType.Word) return;
+        if (ChmProjectGenerator.CurrentSafetyLevel != ChmProjectGenerator.SafetyLevel.None) return;
+        if (_hasWarnedAboutProblematicChars) return;
+
+        var titleChars = ChmProjectGenerator.CheckCHMProblematicCharacters(node.Title);
+        if (titleChars != null)
+        {
+            _hasWarnedAboutProblematicChars = true;
+            var message = $"Word 文件 \"{node.Title}\" 的名称包含 CHM 不兼容的特殊字符（{titleChars}），\n" +
+                          "可能导致 CHM 编译失败。\n\n" +
+                          "建议：\n1. 修改文件名称，去掉特殊字符\n";
+            MessageBox.Show(message, "特殊字符警告", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    // 记录是否已经弹出过特殊字符警告，避免同一批次操作重复弹窗
+    private bool _hasWarnedAboutProblematicChars = false;
 
     private DocumentNode CreateFileNode(string filePath, DocumentNode? parent)
     {
@@ -894,6 +925,30 @@ public partial class MainViewModel : ObservableObject
             // 检查所有文件节点是否有效
             var allFileNodes = RootNodes.SelectMany(r => r.GetAllFileNodes()).ToList();
             AppendLog($"- 总文件数: {allFileNodes.Count}");
+
+            // 检查是否有包含特殊字符的 Word 文件（安全化级别为"不进行安全化"时）
+            if (ChmProjectGenerator.CurrentSafetyLevel == ChmProjectGenerator.SafetyLevel.None)
+            {
+                var problematicWordNodes = new List<(string title, string chars)>();
+                foreach (var node in allFileNodes)
+                {
+                    if (node.NodeType == NodeType.Word)
+                    {
+                        var chars = ChmProjectGenerator.CheckCHMProblematicCharacters(node.Title);
+                        if (chars != null)
+                        {
+                            problematicWordNodes.Add((node.Title, chars));
+                        }
+                    }
+                }
+
+                if (problematicWordNodes.Count > 0)
+                {
+                    var fileList = string.Join("\n", problematicWordNodes.Select(f =>
+                        $"  • {f.title}（包含字符：{f.chars}）"));
+                    AppendLog($"⚠ 警告：以下 Word 文件名称包含特殊字符，可能导致编译失败：\n{fileList}");
+                }
+            }
 
             int validCount = 0;
             int invalidCount = 0;

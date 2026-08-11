@@ -1432,7 +1432,84 @@ public partial class ChmProjectGenerator
     /// <summary>
     /// 当前使用的安全化级别（默认完全安全化）
     /// </summary>
-    public static SafetyLevel CurrentSafetyLevel { get; set; } = SafetyLevel.Full;
+    public static SafetyLevel CurrentSafetyLevel { get; set; } = SafetyLevel.None;
+
+    /// <summary>
+    /// 检查名称是否包含 CHM 不兼容的特殊字符
+    /// </summary>
+    /// <param name="name">要检查的名称</param>
+    /// <returns>包含问题的字符描述，如果没有问题则返回 null</returns>
+    public static string? CheckCHMProblematicCharacters(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return null;
+
+        var problematicChars = new List<char>();
+        int dotCount = 0;
+        int lastDotIndex = name.LastIndexOf('.');
+
+        for (int i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (c == '.')
+            {
+                dotCount++;
+                // 多个点可能有问题（除了扩展名的最后一个点）
+                if (i != lastDotIndex && lastDotIndex > 0)
+                {
+                    if (!problematicChars.Contains('.'))
+                        problematicChars.Add('.');
+                }
+            }
+            else if (c == '&' || c == '+' || c == '#' || c == '%' || c == '!' ||
+                     c == '@' || c == '$' || c == '^' || c == '*' || c == '|' ||
+                     c == ';' || c == ',' || c == '\'' || c == '"' || c == '<' ||
+                     c == '>' || c == '?' || c == '`' || c == '=' ||
+                     c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}')
+            {
+                if (!problematicChars.Contains(c))
+                    problematicChars.Add(c);
+            }
+        }
+
+        if (problematicChars.Count == 0) return null;
+
+        // 构建描述字符串
+        var charDescriptions = problematicChars.Select(c =>
+        {
+            return c switch
+            {
+                '&' => "&",
+                '+' => "+",
+                '#' => "#",
+                '%' => "%",
+                '!' => "!",
+                '@' => "@",
+                '$' => "$",
+                '^' => "^",
+                '*' => "*",
+                '|' => "|",
+                ';' => ";",
+                ',' => ",",
+                '\'' => "'",
+                '"' => "\"",
+                '<' => "<",
+                '>' => ">",
+                '?' => "?",
+                '`' => "`",
+                '=' => "=",
+                '(' => "(",
+                ')' => ")",
+                '[' => "[",
+                ']' => "]",
+                '{' => "{",
+                '}' => "}",
+                '.' => "多余的点",
+                _ => c.ToString()
+            };
+        }).ToList();
+
+        return string.Join("、", charDescriptions);
+    }
 
     private static string SafeHhcFileName(string name)
     {
